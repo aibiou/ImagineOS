@@ -1,0 +1,34 @@
+# Decision Log（ADR 索引与协议）
+
+> 六个月后仍然能知道"为什么当初这么设计"的地方。
+
+## 协议
+
+- 每次重要产品/技术决策记录一个 ADR 文件：`ADR-<编号>-<slug>.md`
+- ADR 状态：`Proposed`（待负责人确认）→ `Accepted` / `Rejected` / `Superseded`
+- **只追加**：已 Accepted 的 ADR 不修改，被推翻时标记 Superseded 并指向新 ADR
+- 触及产品北极星"禁改清单"的决策，状态只能是 Proposed，等待产品负责人
+
+## ADR 模板
+
+```markdown
+# ADR-XXXX：<标题>
+- 日期 / 状态 / 决策人
+## 问题
+## 背景
+## 方案 A
+## 方案 B
+## 决定（或：推荐方案 + 理由）
+## 影响
+## 替代方案（为何不选）
+```
+
+## 索引
+
+| 编号 | 标题 | 状态 | 日期 |
+|------|------|------|------|
+| [ADR-0001](./ADR-0001-alpha-video-generation-strategy.md) | Alpha 视频生成 Provider 策略：组合式管线优先 | **Proposed（待负责人确认）** | 2026-10-05 |
+| ADR-0002 | 仓库形态：单应用 + 严格内部边界（逻辑 monorepo） | Proposed（待确认） | 2026-10-05 |
+| ADR-0003 | Alpha 认证：最小会话 + 完整 User 实体预留 | Proposed（待确认） | 2026-10-05 |
+
+> ADR-0002 / 0003 的完整内容见架构理解报告 §12（D2/D3），确认后在本文档补全文件。
