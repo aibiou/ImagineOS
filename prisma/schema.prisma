@@ -1,0 +1,366 @@
+// ImagineOS Alpha — Prisma Schema
+// 设计依据：Master Brief §47–§52 + docs/architecture/architecture-understanding-report.md 附录 B
+// 约束：SQLite 连接器（无 enum / 无 Json 原生类型）→ 枚举与结构化字段用 String + 应用层 Zod 校验
+// 不变量（由仓储/服务层强制，tests/ 断言）：
+//   I1 ContentVersion 不可变（仓储不暴露版本更新方法）
+//   I2 Remix 永远创建新 Content + 血缘三件套，原作零改动
+//   I3 Provenance 只追加
+//   I4 领域表不含 provider/model 字段（仅 Provenance / Generation / GenerationJob 等执行层记录）
+//   I5 Intent 结构化字段携带 source: user | ai_default
+//   I6 Content.currentVersionId 是唯一现势指针，历史版本永远可寻址
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ============================ 身份层（ADR-0003） ============================
+
+model User {
+  id          String   @id @default(cuid())
+  handle      String   @unique
+  displayName String
+  avatarUrl   String?
+  bio         String?
+  isDemo      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  identities       Identity[]
+  projects         Project[]
+  contents         Content[]
+  createdVersions  ContentVersion[] @relation("VersionCreator")
+  remixesMade      Remix[]
+  interactions     ContentInteraction[]
+  preferences      CreatorPreferences?
+}
+
+model Identity {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  type      String // session | email | oauth（预留）
+  secret    String   @unique
+  createdAt DateTime @default(now())
+  lastSeenAt DateTime?
+
+  @@index([userId, type])
+}
+
+model CreatorPreferences {
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  language        String   @default("zh")
+  defaultAspect   String   @default("9:16")
+  defaultStyle    String   @default("cinematic_realism")
+  preferencesJson String? // 其余偏好（Zod 校验，§38）
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+// ============================ 项目层 ============================
+
+model Project {
+  id        String   @id @default(cuid())
+  ownerId   String
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  title     String
+  status    String   @default("active") // active | archived
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contents Content[]
+
+  @@index([ownerId, status])
+}
+
+// ============================ Content Object 核心（§21, §48） ============================
+
+model Content {
+  id              String        @id @default(cuid())
+  ownerId         String
+  owner           User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  projectId       String?
+  project         Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  title           String
+  description     String?
+  contentType     String        @default("video")
+  status          String        @default("IDEA") // 创作状态机（§51），值域见 core/content/state-machine
+  visibility      String        @default("private") // private | unlisted | public
+  remixPermission String        @default("allow") // allow | deny
+  currentVersionId String?      @unique
+  currentVersion  ContentVersion? @relation("CurrentVersionPointer", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  lastErrorJson   String? // 失败可恢复标记（不回滚状态机位置）
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  versions     ContentVersion[]       @relation("ContentVersions")
+  intents      Intent[]
+  plans        CreativePlan[]
+  stories      Story[]
+  assets       Asset[]
+  generations  Generation[]
+  jobs         GenerationJob[]
+  permissions  Permission[]
+  provenance   Provenance[]
+  publication  Publication?
+  remixOf      Remix?                 @relation("RemixDerivative")
+  remixSources Remix[]                @relation("RemixSource")
+  interactions ContentInteraction[]
+
+  @@index([ownerId, status])
+  @@index([visibility, status])
+}
+
+// 不变量 I1：版本一经创建不可变；I6：parentVersionId 形成血缘链
+model ContentVersion {
+  id              String          @id @default(cuid())
+  contentId       String
+  content         Content         @relation("ContentVersions", fields: [contentId], references: [id], onDelete: Cascade)
+  parentVersionId String?
+  parentVersion   ContentVersion? @relation("VersionLineage", fields: [parentVersionId], references: [id], onDelete: SetNull)
+  childVersions   ContentVersion[] @relation("VersionLineage")
+  versionNumber   Int
+  createdBy       String
+  creator         User            @relation("VersionCreator", fields: [createdBy], references: [id])
+  creationMethod  String // initial | revision | restore | remix | regenerate
+  changelog       String?
+  structureJson   String? // 密封的创作结构快照（配方，Zod 校验）
+  createdAt       DateTime        @default(now())
+
+  intents    Intent[]
+  plans      CreativePlan[]
+  provenance Provenance[]
+  contentsAsCurrent Content[] @relation("CurrentVersionPointer")
+
+  @@unique([contentId, versionNumber])
+  @@index([contentId])
+  @@index([parentVersionId])
+}
+
+// ============================ 意图层（§14–§17） ============================
+
+model Intent {
+  id            String   @id @default(cuid())
+  contentId     String
+  content       Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId     String?
+  version       ContentVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  rawExpression String // 用户原话
+  fieldsJson    String? // 结构化 Intent（Zod：字段级 source: user|ai_default，不变量 I5）
+  interviewJson String? // Intent Interview 状态（≤5 问）
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([contentId])
+}
+
+model CreativePlan {
+  id            String   @id @default(cuid())
+  contentId     String
+  content       Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId     String?
+  version       ContentVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  directionsJson String? // 2–4 个创作方向（§18）
+  selectedDirectionId String?
+  conceptJson   String? // 选定后冻结的概念
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([contentId])
+}
+
+// ============================ 创作结构（§19；工作副本，快照密封进 ContentVersion） ============================
+
+model Story {
+  id             String   @id @default(cuid())
+  contentId      String
+  content        Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId      String?
+  logline        String?
+  arcJson        String? // 叙述弧 + 情绪曲线
+  narrationStyle String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  scenes Scene[]
+
+  @@index([contentId])
+}
+
+model Scene {
+  id        String   @id @default(cuid())
+  storyId   String
+  story     Story    @relation(fields: [storyId], references: [id], onDelete: Cascade)
+  index     Int
+  summary   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  shots Shot[]
+
+  @@index([storyId])
+}
+
+model Shot {
+  id                String   @id @default(cuid())
+  sceneId           String
+  scene             Scene    @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  index             Int
+  visualDescription String?
+  cameraMotion      String? // 运镜
+  durationMs        Int?
+  narrationLine     String? // 旁白行
+  emotion           String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([sceneId])
+}
+
+// ============================ 资产与生成（§50, §52；M1 起使用） ============================
+
+model Asset {
+  id             String   @id @default(cuid())
+  contentId      String
+  content        Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  ownerId        String
+  kind           String // original | generated | derived | preview | thumbnail | final
+  mime           String
+  hash           String
+  storageLocation String
+  durationMs     Int?
+  width          Int?
+  height         Int?
+  sizeBytes      Int?
+  createdAt      DateTime @default(now())
+
+  @@unique([hash, kind]) // 生成重试幂等去重（任务树 T6.1.2）
+  @@index([contentId])
+}
+
+model Generation {
+  id          String   @id @default(cuid())
+  contentId   String
+  content     Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId   String?
+  type        String // text.plan | image.shot | audio.tts | video.compose
+  provider    String // 执行层允许记录模型信息（不变量 I4 的唯一白名单区）
+  model       String
+  status      String // succeeded | failed
+  inputJson   String?
+  outputJson  String?
+  costJson    String? // 成本记账（§62）
+  latencyMs   Int?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([contentId])
+}
+
+model GenerationJob {
+  id              String    @id @default(cuid())
+  contentId       String
+  content         Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId       String?
+  type            String
+  provider        String?
+  model           String?
+  status          String    @default("queued") // queued | claimed | running | succeeded | failed | timeout
+  inputJson       String?
+  outputJson      String?
+  error           String?
+  retryCount      Int       @default(0)
+  maxRetries      Int       @default(3)
+  claimedAt       DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  leaseExpiresAt  DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([status, createdAt])
+  @@index([contentId])
+}
+
+// ============================ 信任与传播层 ============================
+
+model Permission {
+  id             String   @id @default(cuid())
+  contentId      String
+  content        Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  granteeId      String? // null = 默认策略
+  capability     String // view | edit | remix
+  constraintJson String?
+  createdAt      DateTime @default(now())
+
+  @@unique([contentId, granteeId, capability])
+  @@index([contentId])
+}
+
+// 不变量 I3：只追加（仓储不暴露 update/delete）
+model Provenance {
+  id           String   @id @default(cuid())
+  contentId    String
+  content      Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId    String?
+  version      ContentVersion? @relation(fields: [versionId], references: [id], onDelete: SetNull)
+  eventType    String // content_created | version_created | version_restored | remixed | remix_received | published | unpublished | status_changed | ai_generated
+  actorType    String // human | ai | system
+  actorId      String?
+  provider     String? // ai 事件允许记录（§34 白名单）
+  model        String?
+  payloadJson  String?
+  createdAt    DateTime @default(now())
+
+  @@index([contentId, createdAt])
+}
+
+// 不变量 I2：Remix = 新 Content + 新 Version + 血缘三件套
+model Remix {
+  id                    String   @id @default(cuid())
+  derivativeContentId   String   @unique
+  derivativeContent     Content  @relation("RemixDerivative", fields: [derivativeContentId], references: [id], onDelete: Cascade)
+  derivativeVersionId   String
+  sourceContentId       String
+  sourceContent         Content  @relation("RemixSource", fields: [sourceContentId], references: [id], onDelete: Cascade)
+  sourceVersionId       String
+  remixerId             String
+  remixer               User     @relation(fields: [remixerId], references: [id])
+  createdAt             DateTime @default(now())
+
+  @@index([sourceContentId])
+}
+
+model Publication {
+  id             String    @id @default(cuid())
+  contentId      String    @unique
+  content        Content   @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  coverAssetId   String?
+  visibility     String // private | unlisted | public
+  remixPermission String
+  publishedAt    DateTime  @default(now())
+  unpublishedAt  DateTime?
+
+  @@index([visibility, publishedAt])
+}
+
+model ContentInteraction {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  contentId String
+  content   Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  type      String // like | save
+  createdAt DateTime @default(now())
+
+  @@unique([userId, contentId, type])
+  @@index([contentId, type])
+}

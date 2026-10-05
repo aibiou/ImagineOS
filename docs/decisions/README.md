@@ -27,8 +27,8 @@
 
 | 编号 | 标题 | 状态 | 日期 |
 |------|------|------|------|
-| [ADR-0001](./ADR-0001-alpha-video-generation-strategy.md) | Alpha 视频生成 Provider 策略：组合式管线优先 | **Proposed（待负责人确认）** | 2026-10-05 |
-| ADR-0002 | 仓库形态：单应用 + 严格内部边界（逻辑 monorepo） | Proposed（待确认） | 2026-10-05 |
-| ADR-0003 | Alpha 认证：最小会话 + 完整 User 实体预留 | Proposed（待确认） | 2026-10-05 |
+| [ADR-0001](./ADR-0001-alpha-video-generation-strategy.md) | Alpha 视频生成 Provider 策略：组合式管线优先 | **Accepted** | 2026-10-05 |
+| [ADR-0002](./ADR-0002-repository-strategy.md) | 仓库形态：单应用 + 严格内部边界（逻辑 monorepo） | **Accepted** | 2026-10-05 |
+| [ADR-0003](./ADR-0003-auth-strategy.md) | Alpha 认证：最小会话 + 完整 User 实体预留 | **Accepted** | 2026-10-05 |
 
-> ADR-0002 / 0003 的完整内容见架构理解报告 §12（D2/D3），确认后在本文档补全文件。
+> 三项决策均于 2026-10-05 由产品负责人确认（随 D1/D2/D3 一并批准）。

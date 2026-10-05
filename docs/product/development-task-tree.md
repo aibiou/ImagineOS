@@ -1,9 +1,10 @@
 # ImagineOS Alpha — Development Task Tree
 
-- 版本：v1.0（2026-10-05）
+- 版本：v1.1（2026-10-05，M0 完成后更新状态标记）
 - 结构：`Epic → Feature → Task → Acceptance Criteria → 实现要点 → 测试要点`（§67）
 - 配套：`docs/architecture/architecture-understanding-report.md`（为什么这么做）
 - 状态标记：`[ ]` 待做 · `[~]` 进行中 · `[x]` 完成 · `[!]` 阻塞
+- 进度快照：**M0 Walking Skeleton 已完成**（E0/E1/E2 全绿：lint + typecheck + 30 tests + agent-browser 黄金路径自验通过）
 
 ---
 
@@ -56,24 +57,24 @@ M0 Walking Skeleton      M1 First Video         M2 Creator Loop
 > 目标：让"改一行代码 → 自动验证质量"的循环从第一天就成立。
 
 ### F0.1 项目脚手架与模块边界
-- **T0.1.1** 初始化 Next.js + TypeScript strict 项目
+- **[x] T0.1.1** 初始化 Next.js + TypeScript strict 项目
   - AC：`npm run dev/build` 通过；`tsconfig` 开启 `strict`、`noUncheckedIndexedAccess`
   - 实现要点：按 ADR-0002（待批）的"单应用 + 内部边界"落位 `src/app` `src/core` `src/ai` `src/media` `src/infra` `workers/`
   - 测试：build 冒烟
-- **T0.1.2** 模块边界 lint 规则
+- **[x] T0.1.2** 模块边界 lint 规则
   - AC：`src/app`（UI）禁止 import `src/ai` 内部实现，只许走 `src/core` 服务；`src/core` 禁止 import 任何 provider 具体实现
   - 测试：故意违规的样例文件触发 lint 失败（用 eslint 单测或 CI 中的负例检查）
 
 ### F0.2 质量工具链
-- **T0.2.1** ESLint + Prettier + typecheck + Vitest + 脚本聚合
+- **[x] T0.2.1** ESLint + Prettier + typecheck + Vitest + 脚本聚合
   - AC：`npm run lint / typecheck / test / build` 四命令一键可用；`npm run check` 聚合全部
   - 测试：空跑全绿
-- **T0.2.2** CI 管线（GitHub Actions 或等价物；无 remote 时先落 `npm run check` 门禁脚本）
+- **[x] T0.2.2** CI 管线（GitHub Actions 或等价物；无 remote 时先落 `npm run check` 门禁脚本）
   - AC：任一 check 失败即整体失败
   - 测试：注入一个类型错误验证门禁拦截
 
 ### F0.3 环境与配置管理
-- **T0.3.1** 环境变量分层：`.env`（已有 DATABASE_URL）+ `.env.example` + `src/infra/config.ts`（Zod 校验启动期变量）
+- **[x] T0.3.1** 环境变量分层：`.env`（已有 DATABASE_URL）+ `.env.example` + `src/infra/config.ts`（Zod 校验启动期变量）
   - AC：缺关键变量时进程启动即报明确错误，而非运行中途崩
   - 测试：缺 DATABASE_URL 的启动负例
 
@@ -84,21 +85,21 @@ M0 Walking Skeleton      M1 First Video         M2 Creator Loop
 > 目标：把 §47 实体全集落成 Postgres-ready 的 Prisma Schema，附六条数据不变量。
 
 ### F1.1 Schema
-- **T1.1.1** 核心表：User / Identity / Project / Content / ContentVersion / Intent
+- **[x] T1.1.1** 核心表：User / Identity / Project / Content / ContentVersion / Intent
   - AC：六条不变量中 1/2/5/6 由表结构 + 仓储层强制（版本不可变、remix 血缘、intent 字段 source、current_version 指针）
-- **T1.1.2** 创作结构表：CreativePlan / Story / Scene / Shot（结构化 JSONB + 关键列索引）+ Character/World（Content 内 JSONB 预留）
+- **[x] T1.1.2** 创作结构表：CreativePlan / Story / Scene / Shot（结构化 JSONB + 关键列索引）+ Character/World（Content 内 JSONB 预留）
   - AC：Story→Scene→Shot 层级可整树读写，也可单节点 PATCH
-- **T1.1.3** 执行层表：Asset / Generation / GenerationJob（含 retry_count/timeout/error）
-- **T1.1.4** 信任与传播表：Permission / Provenance（append-only）/ Remix / Publication / Like/Save / CreatorPreferences
+- **[x] T1.1.3** 执行层表：Asset / Generation / GenerationJob（含 retry_count/timeout/error）
+- **[x] T1.1.4** 信任与传播表：Permission / Provenance（append-only）/ Remix / Publication / Like/Save / CreatorPreferences
 
 ### F1.2 迁移与种子
-- **T1.2.1** Prisma migrate 初始迁移 + seed（演示用户 + §63 自行车故事样例数据）
+- **[x] T1.2.1** Prisma migrate 初始迁移 + seed（演示用户 + §63 自行车故事样例数据）
   - AC：`prisma migrate dev` + `prisma db seed` 幂等可重放
-- **T1.2.2** Postgres 兼容性审查
+- **[x] T1.2.2** Postgres 兼容性审查
   - AC：schema 无 SQLite 专属类型逃逸（不用裸 SQL）；JSON 字段全部有 Zod schema 对应
 
 ### F1.3 仓储层与测试
-- **T1.3.1** Repository 层（每实体一个仓储，禁止 UI 直接触 Prisma）
+- **[x] T1.3.1** Repository 层（每实体一个仓储，禁止 UI 直接触 Prisma）
   - AC：核心服务只 import 仓储；仓储函数 100% 有单测覆盖（含失败路径）
   - 测试：版本链、remix 血缘、provenance 追加的仓储级单测
 
@@ -109,18 +110,18 @@ M0 Walking Skeleton      M1 First Video         M2 Creator Loop
 > 目标：§70 要求的 Create / Read / Update / Version / Fork 原语，先于一切复杂 UI。
 
 ### F2.1 生命周期与状态机
-- **T2.1.1** 创作状态机（IDEA→…→PUBLISHED，附录 C）实现为纯函数转移表 + 持久化
+- **[x] T2.1.1** 创作状态机（IDEA→…→PUBLISHED，附录 C）实现为纯函数转移表 + 持久化
   - AC：非法跳转抛领域错误；failed 可恢复重试不回起点
   - 测试：全跳转组合表驱动测试（合法/非法各一矩阵）
 
 ### F2.2 版本系统
-- **T2.2.1** `createVersion(contentId, patch, creation_method)`：新版本不可变，挂 parent_version_id
-- **T2.2.2** `listVersions / restoreVersion`：时间线 + 恢复（恢复也是创建新版本，指向被恢复者）
+- **[x] T2.2.1** `createVersion(contentId, patch, creation_method)`：新版本不可变，挂 parent_version_id
+- **[x] T2.2.2** `listVersions / restoreVersion`：时间线 + 恢复（恢复也是创建新版本，指向被恢复者）
   - AC：v1→v2→v3→restore v1 得到 v4(parent=v1)；任何历史版本资产可寻址
   - 测试：版本链不变量测试 + 并发创建安全（SQLite 串行写）
 
 ### F2.3 Fork / Remix 原语（数据层）
-- **T2.3.1** `forkContent(sourceContentId, sourceVersionId, newOwnerId)`：深拷贝创作结构 + 血缘三件套（new_content_id/new_version_id/parent_content_id）+ 权限校验
+- **[x] T2.3.1** `forkContent(sourceContentId, sourceVersionId, newOwnerId)`：深拷贝创作结构 + 血缘三件套（new_content_id/new_version_id/parent_content_id）+ 权限校验
   - AC：原作零改动（字段级 diff 断言）；Remix 权限关闭时 fork 被拒
   - 测试：血缘完整性 + 权限负例
 
