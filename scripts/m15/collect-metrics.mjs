@@ -6,7 +6,7 @@ import { PrismaClient } from '@prisma/client'
 
 const db = new PrismaClient()
 
-const stateFiles = readdirSync('scripts/m15/state').filter((f) => /^p\d+.*\.json$/.test(f))
+const stateFiles = readdirSync('scripts/m15/state').filter((f) => /^(p\d+|g[346]-).*\.json$/.test(f) && f !== 'metrics.json')
 const cases = stateFiles.map((f) => JSON.parse(readFileSync(join('scripts/m15/state', f), 'utf8')))
 
 function stat(nums) {

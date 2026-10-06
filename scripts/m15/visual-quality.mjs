@@ -3,7 +3,7 @@
 //           freezedetect 检出完全静止段；scene 切换检测转场位置。
 // 用法：node scripts/m15/visual-quality.mjs [videoPath ...]（缺省 = 全部 M1.5 案例成片）
 import { execFileSync } from 'node:child_process'
-import { readdirSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { readdirSync, mkdirSync, readFileSync, writeFileSync, existsSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 
@@ -87,8 +87,11 @@ function extractFrames(videoPath, caseId) {
 
 async function main() {
   // 定位全部 M1.5 案例成片（final 资产 + 所属 case 映射）
-  const stateFiles = readdirSync('scripts/m15/state').filter((f) => /^p\d+.*\.json$/.test(f))
+  // 含 g3/g4/g6 链（收口补跑的真实成片）；文件真实性校验：实际字节 vs DB 记录 sizeBytes
+  // ——不匹配（占位/损坏）的成片跳过 YDIF 测量并记录原因（防占位文件污染度量，2026-10-06 沙箱重置后必需）
+  const stateFiles = readdirSync('scripts/m15/state').filter((f) => /^(p\d+|g\d-).*\.json$/.test(f))
   const cases = []
+  const skipped = []
   for (const f of stateFiles) {
     const s = JSON.parse(readFileSync(join('scripts/m15/state', f), 'utf8'))
     if (!s.contentId) continue
@@ -97,9 +100,21 @@ async function main() {
       orderBy: { createdAt: 'desc' },
     })
     if (!finalAsset) continue
-    cases.push({ caseId: s.caseId ?? f.replace('.json', ''), phase: s.phase, path: resolve('storage/assets', finalAsset.storageLocation), sizeBytes: finalAsset.sizeBytes })
+    const path = resolve('storage/assets', finalAsset.storageLocation)
+    if (!existsSync(path)) continue
+    const actualBytes = statSync(path).size
+    const recordedBytes = finalAsset.sizeBytes ?? 0
+    const fileIntegrity = recordedBytes > 0 && Math.abs(actualBytes - recordedBytes) / recordedBytes > 0.05
+      ? 'placeholder-or-corrupt'
+      : 'original'
+    if (fileIntegrity !== 'original') {
+      skipped.push({ caseId: s.caseId ?? f.replace('.json', ''), reason: `文件字节(${actualBytes})与 DB 记录(${recordedBytes})不符——占位重建文件，测量无效` })
+      continue
+    }
+    cases.push({ caseId: s.caseId ?? f.replace('.json', ''), phase: s.phase, path, sizeBytes: finalAsset.sizeBytes })
   }
-  console.log(`定位到 ${cases.length} 个成片`)
+  for (const sk of skipped) console.log(`⊘ ${sk.caseId}: 跳过测量（${sk.reason}）`)
+  console.log(`定位到 ${cases.length} 个可测量成片（另跳过 ${skipped.length} 个占位/失效文件）`)
 
   const results = []
   for (const c of cases) {
@@ -129,14 +144,32 @@ async function main() {
     console.log(`✓ ${c.caseId}: ${r.durationSec}s ${r.resolution} 帧内YDIF均值=${r.ydifInShot.mean} p95=${r.ydifInShot.p95} 静止段=${frozen.length}`)
   }
 
-  // 汇总
-  const inShot = results.flatMap((r) => [r.ydifInShot.mean])
+  // 汇总（历史保留：被跳过的占位案例若在旧输出中有重置前真实测量，携带并标记 historical）
+  const historical = []
+  try {
+    const prev = JSON.parse(readFileSync(OUT, 'utf8'))
+    for (const old of prev.cases ?? []) {
+      if (results.some((r) => r.caseId === old.caseId)) continue
+      if (skipped.some((s) => s.caseId === old.caseId)) {
+        historical.push({ ...old, historical: true, note: '重置前真实测量（源文件已销毁，结果为持久化记录）' })
+      }
+    }
+    // 上一次运行携带的历史条目也继续保留（幂等）
+    for (const old of prev.cases ?? []) {
+      if (old.historical && !historical.some((h) => h.caseId === old.caseId) && !results.some((r) => r.caseId === old.caseId)) {
+        historical.push(old)
+      }
+    }
+  } catch { /* 首次运行无旧文件 */ }
+  const measurable = results.filter((r) => !r.historical)
+  const inShot = measurable.flatMap((r) => [r.ydifInShot.mean])
   const summary = {
     analyzedAt: new Date().toISOString(),
-    caseCount: results.length,
+    caseCount: measurable.length,
+    historicalCaseCount: historical.length,
     ydifInShotMeanAcrossCases: stats(inShot),
-    casesWithFrozenSegments: results.filter((r) => r.frozenSegments.length > 0).map((r) => r.caseId),
-    cases: results,
+    casesWithFrozenSegments: measurable.filter((r) => r.frozenSegments.length > 0).map((r) => r.caseId),
+    cases: [...measurable, ...historical],
   }
   writeFileSync(OUT, JSON.stringify(summary, null, 2))
   console.log(`\n汇总 → ${OUT}`)
