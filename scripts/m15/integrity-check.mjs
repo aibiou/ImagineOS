@@ -14,15 +14,24 @@ function warn(table, check, detail) { issues.push({ severity: 'warn', table, che
 // ---------- 1. Content ↔ ContentVersion ----------
 const contents = await db.content.findMany({ include: { versions: true, publication: true, remixOf: true, remixSources: true } })
 
-// 案例分类：M1.5 生产案例（scripts/m15/state 中的 contentId + 父亲/Remix 链）vs 遗留测试数据
+// 案例分类：M1.5 生产案例（scripts/m15/state 中的 contentId + 父亲/Remix/Native 链）vs 遗留测试数据
+// 作用域扩展（Gate 7）：node integrity-check.mjs <idsFile> —— idsFile 为换行分隔的 contentId 清单
+// （如 human-test-export.json 提取的测试作品），其内作品全部计入生产案例集。
 const { readdirSync, readFileSync: rf } = await import('node:fs')
 const m15ContentIds = new Set()
-for (const f of readdirSync('scripts/m15/state').filter((x) => /^(p\d+|g[34]-)/.test(x))) {
+for (const f of readdirSync('scripts/m15/state').filter((x) => /^(p\d+|g\d-)/.test(x))) {
   try {
     const st = JSON.parse(rf(`scripts/m15/state/${f}`, 'utf8'))
     if (st.contentId) m15ContentIds.add(st.contentId)
     if (st.remix?.contentId) m15ContentIds.add(st.remix.contentId)
   } catch {}
+}
+const idsFile = process.argv[2]
+if (idsFile) {
+  const ids = rf(idsFile, 'utf8').split(/\s+/).filter(Boolean)
+  for (const id of ids) m15ContentIds.add(id)
+  stats.scopedIdsFile = idsFile
+  stats.scopedIdsCount = ids.length
 }
 stats.m15Cases = contents.filter((c) => m15ContentIds.has(c.id)).length
 stats.legacyFixtures = contents.length - stats.m15Cases

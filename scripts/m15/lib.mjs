@@ -314,6 +314,17 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
   })
 
   if (state.phase === 'generating') {
+    // 失败恢复入口（M1.5 缺陷修复②的脚本侧闭环）：
+    // GENERATING + Job failed（如 429 重试耗尽）时，waitForStatus 会立即抛错；
+    // 这里检测到 failed Job 先走 regenerate 重入（API 已接受 GENERATING 态），再继续等待。
+    const probe = await client.get(`/api/contents/${state.contentId}/creation`)
+    if (probe.job && (probe.job.status === 'failed' || probe.job.status === 'timeout')) {
+      console.log(`  [${caseId}] 检测到失败 Job（${probe.job.type}），走 regenerate 重入`)
+      const reg = await client.post(`/api/contents/${state.contentId}/regenerate`, {})
+      state.record.generateJobId = reg.jobId
+      state.record.recoveredFromFailedJob = { at: new Date().toISOString(), prevJobStatus: probe.job.status }
+      persist()
+    }
     const data = await waitForStatus(client, state.contentId, 'REVIEW', { timeoutMs: 900_000 })
     state.record.shotAssets = (data.assets?.shots ?? []).map((s) => ({ imageUrl: s.imageUrl, audioUrl: s.audioUrl }))
     stamp(state, 'review', 'generating')

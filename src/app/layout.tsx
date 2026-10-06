@@ -16,7 +16,7 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "ImagineOS — 想到了，就让它发生",
   description:
-    "AI 原生的人类表达与视觉创造操作系统。不需要会剪辑、会摄影、会写 Prompt——说出你想表达的，AI 创作团队帮你完成。",
+    "AI 原生的人类表达与视觉创造操作系统。不需要会剪辑、会摄影——说出你想表达的，AI 创作团队帮你完成。",
   keywords: ["ImagineOS", "AI 创作", "视频生成", "表达", "Creation Loop", "从这里开始创作"],
   openGraph: {
     title: "ImagineOS",

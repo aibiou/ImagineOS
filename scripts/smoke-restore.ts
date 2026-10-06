@@ -24,7 +24,7 @@ async function tryImage(): Promise<boolean> {
     const zai = await ZAI.create()
     const res = await zai.images.generations.create({
       prompt: 'a minimal solid color gradient background, soft purple to blue, no text',
-      size: '512x512',
+      size: '768x1344',
     })
     const b64 = (res as any).data?.[0]?.base64
     console.log('[smoke] IMAGE OK:', b64 ? `base64 length ${String(b64).length}` : 'no data')

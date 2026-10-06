@@ -9,7 +9,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
     const body = await readJson<unknown>(req)
     const parsed = AdvanceStatusInputSchema.safeParse(body ?? {})
     if (!parsed.success) {
-      return Response.json({ error: 'invalid_input', message: '缺少目标状态 to' }, { status: 400 })
+      return Response.json({ error: 'invalid_input', message: '缺少要推进到的创作环节' }, { status: 400 })
     }
     const user = await getSessionUser()
     if (!user) {

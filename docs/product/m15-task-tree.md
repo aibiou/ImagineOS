@@ -71,3 +71,49 @@ p10 收尾 → G3 修订链 → G4 Remix 链 → G5 终版完整性
 ## 5. 明确不做
 
 粉丝系统、评论系统、复杂 Feed 算法、商业化、创作者收益、大型社交图谱 UI、大规模 UI 重构、推翻 M1 数据模型。
+
+## 6. M1.5 Status Snapshot（2026-10-06 收口时点；以真实实验为准，覆盖本文件早期状态）
+
+> 数据源：DB 权威记账 + `scripts/m15/state/*` + git log。本节为准，早期 T1–T14 表格是过程记录。
+
+### 6.1 Gate 完成度
+
+| Gate | 状态 | 关键证据 |
+|------|------|----------|
+| G1 十案例 | ✅ 9/10 发布；p10 ⏸（Job failed 429，重入机制已闭环） | state/p01–p09 phase=published（A） |
+| G2 三范式 | ✅ | 配方 style 分化传导至画面（A/B） |
+| G3 修订链 | 🔶 机制 ✅（6 个 revision 版本在库）／四连改 ⏸ | `m15-revision-report.md` |
+| G4 Remix 链 | 🔶 机制 ✅（8 条血缘全过）／专项链 ⏸ | `m15-remix-report.md` |
+| G5 完整性 | ✅ 0 错 0 警（重置后复验仍绿） | `m15-content-integrity-report.md` |
+| G6 视觉质量 | ✅ 组合式量化完成（证据分级 A/B/C）／Native Golden Case ⏸ | `m15-visual-quality-report.md` |
+| G7 真人测试 | ✅ 计划 + 系统侧就绪（导出/批量完整性实测）+ 报告模板；执行属人工阶段 | `human-test-plan.md` + `m15-human-test-report.md` |
+
+### 6.2 阻塞原因
+
+- Provider 三通道（LLM/图像/TTS）429 长冷却（2026-10-06 当日 ~360 次调用触发），全部配额依赖项已就绪待恢复：`node scripts/m15/finish-m15.mjs` 一键补跑（含 failed Job 重入 + native 模式切换）；
+- 2026-10-06 09:03 沙箱重置销毁重置前媒体文件（占位恢复）：结构完整性不受影响，历史度量数据为重置前真实采集（时间戳可证），native smoke 文件幸存且复测一致。
+
+### 6.3 已验证 / 未验证
+
+- **已验证（A 级）**：Intent 10/10 编译零失败；六不变量 DB 级全过；端到端延迟（干净窗 121–262s / 波动中位 409s）；成本画像（LLM 8.6 + 图 10.9 + TTS 9.1 / 案例）；Native 运动量 2.079（可复现）；UX 语言零工程术语（含 meta 描述，2 处边界已修）。
+- **未验证（⏸/人工）**：四连改定位精度；Remix 换母亲语义修改；p10 发布；Native 全案例质量；真人六指标。
+
+### 6.4 当前核心指标
+
+| 指标 | 值 | 等级 |
+|------|-----|------|
+| Intent 编译成功率 | 10/10 | A |
+| 组合式 YDIF（镜头内均值） | ≈1.0（p04=0.907） | B/C |
+| Native YDIF | 2.079 | A |
+| 端到端（干净/波动中位） | 121–262s / 409s | A |
+| 完整性 | 0 错 0 警 | A |
+| Expression Success Rate | **未度量**（Gate 7 真人测试） | 人工 |
+
+### 6.5 M2 前置条件（进入 M2 需全部满足）
+
+1. G3/G4/p10/Native Golden Case 补跑完成且报告更新（配额恢复后 ~40 分钟机器时间）；
+2. Gate 7 真人测试 ≥10 人执行完毕，Expression Success 与「我还想做一个」行为率出数；
+3. 完整性持续绿（已满足）；
+4. 无 P0 缺陷（已满足）。
+
+详见 `docs/evaluations/m15-decision-report.md`（Q1–Q7）。

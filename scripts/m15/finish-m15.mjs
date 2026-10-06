@@ -42,14 +42,23 @@ async function main() {
   }
   console.log(`[${ts()}] ✓ 配额已恢复，开始补跑`)
 
-  run('p10 收尾', 'node scripts/m15/run-cases.mjs p10-cause')
+  // composition 模式（默认）跑全部行为链
+  run('确认 dev server 为 composition 模式', 'bash scripts/m15/restart-dev.sh composition')
+  run('p10 收尾（含失败 Job regenerate 重入）', 'node scripts/m15/run-cases.mjs p10-cause')
   run('Gate 3 修订链（父亲故事四连改）', 'node scripts/m15/run-revision-chain.mjs')
   run('Gate 4 Remix 链（换母亲 + 再修改）', 'node scripts/m15/run-remix-chain.mjs')
+
+  // native 模式跑 Golden Case（IMAGINEOS_FORCE_NATIVE=1 只影响该段）
+  run('切 native 模式重启 dev server', 'bash scripts/m15/restart-dev.sh native')
+  run('Gate 6b Native Golden Case（全镜 native）', 'node scripts/m15/run-native-golden.mjs')
+  run('切回 composition 模式', 'bash scripts/m15/restart-dev.sh composition')
+
+  // 终版数据
   run('Gate 5 终版完整性', 'node scripts/m15/integrity-check.mjs')
   run('Gate 6a 全量视觉度量', 'node scripts/m15/visual-quality.mjs')
   run('指标终版采集', 'node scripts/m15/collect-metrics.mjs')
 
-  console.log(`\n[${ts()}] 补跑完成。报告更新点：§1.1 p10 行 / §3 Gate3 / §4 Gate4 / §5 §6 数据`)
+  console.log(`\n[${ts()}] 补跑完成。报告更新点：§1.1 p10 行 / §3 Gate3 / §4 Gate4 / §5 §6 数据 / Gate6b Golden Case`)
 }
 
 main().catch((e) => { console.error('FATAL', e); process.exit(1) })
