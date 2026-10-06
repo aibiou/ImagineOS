@@ -140,3 +140,28 @@ Work Log:
 Stage Summary:
 - 本地与远端现已 100% 一致（main = 528a5b0）；沙箱再重置时可从远端完整恢复（代码+文档），仅需重跑 bun install + prisma generate + restore-media.ts + seed
 - 恢复 runbook 已固化在 worklog sandbox-restore-001/002 两条记录中
+
+---
+Task ID: m15-closeout-phase-a
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: M1.5 收口指令 Phase A（非配额依赖全量工作）——2026-10-06 产品负责人 /goal 指令
+
+Work Log:
+- 状态评估（指令§1）：重读真实仓库（git log/state 代码/DB）——确认 M1.5 达成度 ≈85%：G1 9/10、G2/G5/G6a/G7 完成，G3/G4 机制层已验证、行为链待配额；发现 2026-10-06 09:03 沙箱重置销毁重置前全部媒体（占位恢复）——历史度量数据为重置前真实采集（时间戳可证），native smoke 文件幸存
+- 证据分级体系（A 可复现 / B 持久化不可复现 / C 引用 / ⏸ 待补）落地到全部报告；native smoke 复测 YDIF=2.079 与原记录 2.08 一致（A 级加固）；发现 9 案例 YDIF 逐例数据未持久化（仅 p04 在库）→ 主报告该口径降级为 C 级引用
+- 诚实修正：主报告延迟口径（「中位 3.5min」→ 干净窗 121-262s / 波动中位 409s，修正声明入档）；成本口径对齐 DB 权威记账（text.plan 77/0、image 98/18、tts 82/48）
+- 报告交付（7 份新增/修正）：decision-report（Q1-Q7 全分级回答+预注册判定标准）、visual-quality（12 维度+核心问题诚实回答）、cost、content-integrity（0错0警+媒体真实性披露）、revision/remix（机制 A 级+行为链待补+预注册失败口径）、human-test-report 模板（8 项系统侧就绪实测，人工字段全部「未执行」）
+- Gate 7 系统侧就绪（指令§6）：export-human-test.mjs 六指标导出实测可运行（34 非种子用户可追溯）；integrity-check.mjs 支持 idsFile 作用域批量（实测）；composition/native 配置区分经 Generation 记账可判
+- 语言扫描（指令§9）：修复 2 处边界（layout meta「会写 Prompt」、status 路由「缺少目标状态 to」）；STAGE_LABEL 全状态覆盖确认；Remix→「从这里开始创作」全站生效
+- 关键缺陷预防（烧配额前的代码审查）：driveCase 无条件发布到 PUBLISHED 而 applyRevision 只接受 REVIEW/READY/STORYBOARD（Alpha 无下线 API）→ G3 四连改会在第 1 轮即 422 失败 → driveCase 新增 stopBeforePublish + G3/G4 脚本时序修复 + G4 补「衍作品可发布」验证
+- 失败恢复闭环：lib.mjs driveCase 检测 failed Job 自动 regenerate 重入（p10 恢复路径打通）
+- 度量诚实性防护：visual-quality.mjs 字节校验（9 占位成片全部正确跳过）+ 历史保留机制（p04=0.907 以 historical 标记携带）；collect-metrics 扩展到 g3/g4/g6
+- Native Golden Case 就绪：run-native-golden.mjs（≥5 镜全 native+逐镜记账+G3 基线对比+回落事件采集）；restart-dev.sh 模式切换实测通过（server 跨工具调用存活验证）
+- 门禁：lint ✓ / typecheck ✓ / vitest 34/34 ✓（build 因平台约束跳过：dev server 必须保活供配额依赖闸门 HTTP 驱动，build 会覆写 .next——已在收口总结注明）
+- 提交：91e17e5（phase-A closeout）/ bca2b49（publish-timing fix）/ 653215a（metric honesty guards）→ 已推 GitHub
+
+Stage Summary:
+- M1.5 非配额工作 100% 完成；剩余全部为配额依赖项（p10/G3/G4/Native Golden Case），一键编排器 finish-m15.mjs 就绪
+- 关键结论维持并加固：瓶颈排序 视觉质量 > 内容传播 > Intent ≈ Revision > UX；native smoke 为唯一可复现的运动量证据（2.079，2.1×于组合式）
+- M2 前置条件明确（4 条，2 条已满足）；M2 冻结清单遵守
+- 下一步：配额恢复（探测中，3 通道仍 429）→ finish-m15.mjs 或分步前台执行 Phase B → 报告终版更新 → 决策报告收口
