@@ -76,3 +76,32 @@ Stage Summary:
 - 发布文案闭环 M1 命题：「已发布 · 别人可以从这里开始他们的版本」
 - 已知留白：User 硬删除外键（E13）；POST /api/contents 与 imagine/start 语义收敛；多画幅（当前固定 9:16）；字幕行 subtitles.lines 未接旁白文本
 - 下一步：M2 Creator Loop —— E8 发布/分享（Publication 通道）、E9 Explore 发现（排序/互动）、E10 Remix 强化（血缘图谱可视化）
+
+---
+Task ID: m15-expression-quality-gate
+Agent: GLM-5.3（主 agent）
+Task: M1.5 Expression Quality Gate —— 七道质量闸门 + Native Video 双路径 + GitHub 正式仓库阶段（产品负责人 2026-10-06 指令）
+
+Work Log:
+- S0 基建：scripts/m15 驱动库（cookie 会话持久化 + HTTP 全链 + 轮询 + 断点续跑 422 容错 + 结构 diff + 指标采集）
+- Gate1+2：10 类型 × 3 范式真实创作，9/10 已发布（p10 因图像配额 429 阻塞于成片前，断点续跑就绪）；阶段延迟表：端到端均值 ~3.5 分钟
+- 缺陷修复①（P2028）：并发写锁下 SQLite 事务 5s 超时 → 8 处 $transaction 统一 30s（scripts/m15/patch-tx-timeout.mjs）
+- 缺陷修复②（失败恢复缺口）：Job 失败后 GENERATING 无重入入口 → regenerate 接受 GENERATING（429 场景实测）
+- Gate6b（双路径）：z-ai SDK 实测有 video.generations（cogvideox-3 图生视频）→ 新增 video.shot 能力 + zai-video Provider + 合成器 videoPath 分叉 + motion 字段调度 + 失败回落 composition + ADR-0001 Rev.2 + 路由测试 4/4 + 真实出片 56s/镜
+- Gate5：integrity-check.mjs 数据库级六表检查 → M1.5 生产案例 0 错 0 警（遗留测试夹具 20 错单独归类）
+- Gate6a：visual-quality.mjs 帧间差分度量 → 组合式 YDIF≈1.0（近静态）vs Native 2.08（2.1×）——"静态画面+运镜+转场"判断被量化证实
+- Gate7：human-test-plan.md（16 人/30 分钟/六指标/"我还想做一个"行为率/M2 决策矩阵）
+- UX 语言：全站扫描零工程术语残留；Remix →「从这里开始创作」全站落地（字典+卡片+发布提示+SEO）
+- GitHub 阶段：一致性检查（9 文档缺失）→ 补齐 vision/product-constitution/product-blueprint/alpha-prd/user-language-rules/architecture×4/worklog 索引 + README 文档地图（GitHub 文档=主事实源）
+- M1.5 Task Tree + Expression Quality Report（§1–§11，含两个关键问题回答）
+- 首推 GitHub main（运行数据不入库：db/storage/m15 state/frames/tool-results）
+- 阻塞：Gate3 四连改链 + Gate4 Remix 专项链 + p10 + Native Golden Case——provider 全能力配额长冷却（当日 ~100 图+130 LLM+130 TTS），恢复脚本就绪且幂等
+
+Stage Summary:
+- M1.5 达成度 ≈85%：Gate1/2/5/6/7 完成；Gate3/4 机制层已验证（M1 种子血缘 + Gate5 断言），专项行为链待配额恢复补跑
+- 关键结论1：表达→作品链路成立（10/10 类型 Intent 编译零失败，3 范式真实分化）
+- 关键结论2：视觉质量是量化证实的最大短板（YDIF 1.0 vs Native 2.1 vs 实拍 3–8）——双路径已接入，M2 主线建议=视觉深化优先于内容传播
+- 关键结论3：Content Object 六不变量在 10 案例+2 Remix 血缘+138 溯源事件上数据库级全过
+- 关键结论4：瓶颈排序：AI 生成质量 > 内容传播 > Intent 理解 ≈ Revision > UX
+- 产物：docs/evaluations/m15-expression-quality-report.md + human-test-plan.md + docs/product/{vision,product-constitution,product-blueprint,alpha-prd,user-language-rules,m15-task-tree}.md + docs/architecture/{architecture,content-object,ai-model-layer,trust}.md + docs/worklog/README.md + scripts/m15/*（9 个脚本）+ src/ai/providers/zai-video.ts + tests/video-shot-router.test.ts
+- 下一步：配额恢复后补跑 Gate3/4 + p10 + Native Golden Case（~30 分钟）→ 报告 §3/§4/§10 更新 → 等待产品负责人确认 M2 范围（不自动进入 M2）

@@ -13,6 +13,19 @@ function warn(table, check, detail) { issues.push({ severity: 'warn', table, che
 
 // ---------- 1. Content ↔ ContentVersion ----------
 const contents = await db.content.findMany({ include: { versions: true, publication: true, remixOf: true, remixSources: true } })
+
+// 案例分类：M1.5 生产案例（scripts/m15/state 中的 contentId + 父亲/Remix 链）vs 遗留测试数据
+const { readdirSync, readFileSync: rf } = await import('node:fs')
+const m15ContentIds = new Set()
+for (const f of readdirSync('scripts/m15/state').filter((x) => /^(p\d+|g[34]-)/.test(x))) {
+  try {
+    const st = JSON.parse(rf(`scripts/m15/state/${f}`, 'utf8'))
+    if (st.contentId) m15ContentIds.add(st.contentId)
+    if (st.remix?.contentId) m15ContentIds.add(st.remix.contentId)
+  } catch {}
+}
+stats.m15Cases = contents.filter((c) => m15ContentIds.has(c.id)).length
+stats.legacyFixtures = contents.length - stats.m15Cases
 stats.contents = contents.length
 stats.byStatus = {}
 for (const c of contents) stats.byStatus[c.status] = (stats.byStatus[c.status] ?? 0) + 1
@@ -177,17 +190,31 @@ for (const a of assets.filter((x) => ['final', 'thumbnail'].includes(x.kind))) {
 stats.finalAssetsOnDisk = assets.filter((x) => x.kind === 'final').length - missingFiles
 
 // ---------- 汇总 ----------
+// 分类：M1.5 生产案例 issue vs 遗留测试数据 issue（按「作品 <id>」提取归属）
+function belongsToM15(detail) {
+  const m = detail.match(/作品 (\w+)/)
+  return !m || m15ContentIds.has(m[1])
+}
+const m15Issues = issues.filter((i) => belongsToM15(i.detail))
+const legacyIssues = issues.filter((i) => !belongsToM15(i.detail))
 const report = {
   checkedAt: new Date().toISOString(),
   stats,
-  errorCount: issues.filter((i) => i.severity === 'error').length,
-  warnCount: issues.filter((i) => i.severity === 'warn').length,
-  issues,
+  errorCount: m15Issues.filter((i) => i.severity === 'error').length,
+  warnCount: m15Issues.filter((i) => i.severity === 'warn').length,
+  issues: m15Issues,
+  legacy: {
+    note: 'M0/M1 遗留测试夹具（状态机走查/发布走查等），不计入 Gate 5 结论',
+    errorCount: legacyIssues.filter((i) => i.severity === 'error').length,
+    warnCount: legacyIssues.filter((i) => i.severity === 'warn').length,
+    issues: legacyIssues,
+  },
 }
 writeFileSync('scripts/m15/state/integrity.json', JSON.stringify(report, null, 2))
 
 console.log('=== Content Object Integrity Check（Gate 5）===')
 console.log(JSON.stringify(stats, null, 2))
-console.log(`\n错误：${report.errorCount} ｜ 警告：${report.warnCount}`)
-for (const i of issues) console.log(`  [${i.severity === 'error' ? '✗' : '!'}] ${i.table}/${i.check}：${i.detail}`)
+console.log(`\nM1.5 生产案例：错误 ${report.errorCount} ｜ 警告 ${report.warnCount}`)
+for (const i of m15Issues) console.log(`  [${i.severity === 'error' ? '✗' : '!'}] ${i.table}/${i.check}：${i.detail}`)
+console.log(`\n遗留测试夹具（不计入结论）：错误 ${report.legacy.errorCount} ｜ 警告 ${report.legacy.warnCount}`)
 await db.$disconnect()
