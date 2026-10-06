@@ -8,12 +8,12 @@
 
 ## 0. 执行摘要
 
-M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**：
+M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**（2026-10-07 Phase B 补跑后终版）：
 
-1. **表达→作品链路成立**：9/10 案例真实走完「一句话表达 → 发布」，覆盖 10 种表达类型 × 3 种内容范式，干净窗口端到端 121–262s，含排队波动中位 409s（详见 Cost Report §3 修正声明）。
-2. **视觉质量是当前最大短板，且已被量化证实**：组合式管线的成片是"静态画面 + 运镜 + 转场"（帧间差分 YDIF ≈ 1.0），Native 路径（cogvideox-3 图生视频）运动量为其 2.1–2.3 倍且含真实主体运动——双路径已接入并真实验证（ADR-0001 Rev.2；native smoke 为可复现 A 级证据，YDIF 复测 2.079）。
-3. **数据完整性满分**：M1.5 生产案例在六表关系检查中 0 错误 0 警告；Content Object 的版本/血缘/溯源不变量全部成立。
-4. **修订与 Remix 的机制在 M1 已被验证**（种子数据 + 1 次真实修订记账），Gate 3/4 的专项四连改链因配额冷却待补跑。
+1. **表达→作品链路成立**：10/10 案例真实走完「一句话表达 → 发布」（p10 已于 10-06 20:48 经失败 Job regenerate 重入补齐），覆盖 10 种表达类型 × 3 种内容范式，干净窗口端到端 121–262s，含排队波动中位 409s（详见 Cost Report §3 修正声明）。
+2. **视觉质量是当前最大短板，且已被量化证实**：组合式管线的成片是"静态画面 + 运镜 + 转场"（帧间差分 YDIF ≈ 1.0），Native 路径运动量为其 2.1–2.3 倍且含真实主体运动——双路径已接入并真实验证（ADR-0001 Rev.2；native smoke 为可复现 A 级证据，YDIF 复测 2.079）。
+3. **数据完整性满分**：M1.5 生产案例在六表关系检查中 0 错误 0 警告（终版 13 案例全发布）；Content Object 的版本/血缘/溯源不变量全部成立。
+4. **修订与 Remix 已从机制层补齐到行为层**：Gate 3 四连改全部完成并发布（v1→v5，局部性 4/4→2/4→1/4→2/4 镜）；Gate 4 Remix 链全通过（血缘三件套/配方继承/原作零改动/衍作独立发布）。Native Golden Case 以混合降级形态完成（1/5 镜真 native + 4/5 镜 composition 回落，详见 §6b 与视觉质量报告）——全镜 native 待 agnes 视频队列窗口。
 
 **2026-10-06 沙箱重置事件披露**：运行沙箱 09:03 重置，重置前的 208 个媒体文件被销毁并以占位文件恢复（结构完整性不受影响，历史度量数据均为重置前真实采集；证据分级见 Visual Quality Report §0）。配额恢复后的新链路（G3/G4/p10/Native）将产生真实字节的补齐证据。
 
@@ -31,8 +31,8 @@ M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**：
 |------|----------|-------|----------|------------------------------------------|
 | LLM（text.plan） | `openai-compat:agnes-com` | `agnes-3.0-flash` | ✅ 5/5 调用成功，延迟 5.3–30.6s | $0（牌价 input $0.05/M · output $0.15/M） |
 | Image（image.shot） | `openai-compat:agnes-com` | `agnes-image-2.5-flash` | ✅ 12/12 调用成功，延迟 8.7–13.4s（均值 9.9s） | $0（牌价 $10–24/千张，按分辨率） |
-| TTS（audio.tts） | 无自定义 → `zai-tts` 兜底 | `zai-tts-tongtong` | ✅ fallback 链序已验证；36 次尝试全部 429（配额冷却中） | z-ai 内部配额 |
-| Video（video.shot） | `openai-compat:agnes-com` | `agnes-video-2.5-flash` | 🔶 协议已适配并单测覆盖；服务端队列满（503）阻塞中 | $0（牌价 $0.025/秒 @720P） |
+| TTS（audio.tts） | 无自定义 → `zai-tts` 兜底（产品负责人指定 TTS 走内置） | `zai-tts-tongtong` | ✅ 配额间歇性恢复：恢复窗口内 127 次成功（1–5s/条）；冷却窗口 127 次失败——重试与 regenerate 重入吸收，最终全部案例发布 | z-ai 内部配额 |
+| Video（video.shot） | `openai-compat:agnes-com` → `zai-video` 兜底 | `agnes-video-2.5-flash` / `cogvideox-3` | 🔶 混合结果：agnes 队列满 503（间歇开放，10-06 20:14 窗口内 278s 全链成功 1 次）；zai-video 429 中偶通（Golden Case 1 镜 68.6s 成功）；详见 §6b | $0（agnes 限时免费；牌价 $0.025/秒 @720P） |
 
 ### 0.5.2 链路验证方法与证据（A 级）
 
@@ -53,7 +53,7 @@ M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**：
 
 ## 1. Gate 1 — 真实内容质量（10 类型真实创作）
 
-### 1.1 案例矩阵（9/10 已发布，p10 阻塞于配额）
+### 1.1 案例矩阵（10/10 已发布；p10 于 2026-10-06 20:48 补齐）
 
 | 案例 | 类型 | 范式 | Intent（用户原话摘要） | 镜头 | 成片 | 状态 |
 |------|------|------|------------------------|------|------|------|
@@ -66,7 +66,7 @@ M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**：
 | p07 2085 年的一天 | 未来想象 | C 强想象 | 未来城市与普通人生活 | 5 | 37.6s / 3.3MB | ✅ 发布 |
 | p08 最后一枚火箭 | 科幻 | C 强想象 | 地球安静目送火箭离开 | 5 | 42.6s / 4.3MB | ✅ 发布 |
 | p09 手工咖啡 | 产品介绍 | B 电影 | 慢下来的生活 | 4 | 28.2s / 2.0MB | ✅ 发布 |
-| p10 流浪动物过冬 | 公益 | B 电影 | 一个纸箱一碗水一点善意 | 5 | — | ⏸ 配额阻塞（配方/分镜/7 资产已完成，重试脚本就绪） |
+| p10 流浪动物过冬 | 公益 | B 电影 | 一个纸箱一碗水一点善意 | 5 | 42.6s | ✅ 发布（2026-10-06 20:48，failed Job regenerate 重入，68s 完成收尾；image 走 agnes，详见 §0.5） |
 
 **关键观察**：
 - 10 种类型全部通过 Intent Engine 编译为结构化配方（访谈问题 0–3 个，用户可"交给我来定"跳过）；
@@ -127,32 +127,45 @@ Alpha 的成本记账以**调用次数 + 延迟**为代理（provider 未返回�
 
 ---
 
-## 3. Gate 3 — Revision Quality（⏸ 阻塞，恢复即补跑）
+## 3. Gate 3 — Revision Quality ✅（2026-10-06/07 四连改全部完成并发布）
 
-**机制层已验证的证据**（M1 种子 + 记账）：
-- 修订定位器（revision.locate）真实运行过：输出 plan（targetLevel/summary/affectedShotIndexes）+ 修改后完整结构，延迟 15.1s；
-- 修订=新 ContentVersion（method=revision）+ changelog（用户反馈原文）+ 旧版本完整保留——版本链与记账已由 Gate 5 断言；
-- 结构 diff 工具（`lib.mjs diffStructures`）已就绪：镜头级字段级变更定位。
+**四连改行为链终版结果**（初始 Intent：「我想做一个关于父亲的故事。」；执行段 Provider：LLM/Image = agnes-com，TTS = 内置 zai-tts，见 §0.5）：
 
-**待补跑**（脚本 `scripts/m15/run-revision-chain.mjs`，断点续跑）：
-父亲故事四连改——「再温暖一点」「父亲不要说话」「第二个镜头换成童年」「结尾不要煽情」。每次验证：理解正确（plan 层）/ 只改相关镜头（diff 局部性）/ 新 Version / 旧 Version 保留 / changelog 可追踪原因。
+| # | 用户反馈（原话） | 定位 | 局部性（改动镜数） | 新版本 | 耗时 | 备注 |
+|---|------------------|------|---------------------|--------|------|------|
+| 1 | 再温暖一点 | style（全局情绪调暖） | 4/4 镜（imagePrompt + narrationLine） | v2 | 113s | 原生完成 |
+| 2 | 父亲不要说话 | shot（含台词镜头） | 2/4 镜（narrationLine） | v3 | 84s | 原生完成 |
+| 3 | 第二个镜头换成童年 | shot（镜头 2 替换） | 1/4 镜 | v4 | — | 恢复模式：apply 成功后 storyboard Job 因 z-ai TTS 二次 429 失败（10-06 16:26），10-06 20:50 regenerate 同版本重入补齐 |
+| 4 | 结尾不要煽情 | 尾部镜头收敛 | 2/4 镜 | v5 | — | 恢复模式：编排器进程被外部 SIGKILL，v5 生成已完成后 21:00 补 render/发布/记账 |
 
-**阻塞原因**：修订 apply 需重跑图像生成（provider 配额冷却）。LLM 定位能力本身已验证可用。
+**验收要点全部成立**：
+- **理解正确**：plan 层定位准确（情绪级 / 角色台词级 / 单镜替换级 / 尾部收敛级），修订原因（changelog）与用户反馈原话一致；
+- **局部性**：四改的镜头级 diff 分别为 4/4（全局情绪合理全改）、2/4、1/4、2/4——未受影响的镜头零改动；
+- **版本链完整**：v1 初稿 → v2 → v3 → v4 → v5，全部 method=revision + changelog，旧版本保留可回溯（版本恢复功能另有 2 次 version_restored 事件在库）；
+- **发布态可修订**：整个修订链在 READY 态上进行，最终 v5 发布。
+
+**诚实记录（过程事件，不影响结论）**：修订 3 首次尝试因 z-ai TTS 配额二次冷却失败（[ModelRouter] audio.tts 全候选失败：zai-tts 429），状态机按 §51 原地留在 GENERATING 未丢用户工作，恢复用 regenerate 同版本重入（T9.1.1 AC 验证）；修订 4 遇编排器进程被外部 SIGKILL（非应用缺陷，见测试装置复盘）。两恢复均在数分钟内完成，无人工干预。
 
 ---
 
-## 4. Gate 4 — Remix Quality（⏸ 阻塞，恢复即补跑）
+## 4. Gate 4 — Remix Quality ✅（2026-10-06 21:10 专项链全通过）
 
-**机制层已验证的证据**（M1 种子的 2 条 Remix 血缘 + Gate 5 断言）：
-- 血缘三件套（derivativeContentId/derivativeVersionId/sourceContentId+sourceVersionId）数据库级完整；
-- 原作零改动（fork-service 不修改源作任何字段；原作侧仅追加 remixed 事件）；
-- 衍作诞生事件 remix_received（含 sourceTitle/sourceVersionNumber）、首版 method=remix、changelog「Remix 自《xxx》vN」；
-- Intent rawExpression 复制（新作者起点语境继承）；
-- 配方 structureJson 完整继承（字节级相等，Gate 5 断言通过）。
+**Remix 链终版结果**（原作 = Gate 3 父亲故事 v5；新匿名用户执行「从这里开始我的版本」）：
 
-**待补跑**（脚本 `scripts/m15/run-remix-chain.mjs`）：Remix 副本真实再生成（自己的像素）→「把父亲换成母亲，保持原来的情绪和视觉风格」→「结尾旁白轻一点」→ 原作字段级快照 diff 复核。
+| 验收项 | 结果 | 证据 |
+|--------|------|------|
+| 血缘三件套 | ✅ | derivativeContentId / derivativeVersionId / sourceContentId+sourceVersionId 全部正确 |
+| 衍作首版 method=remix | ✅ | v1 changelog「Remix 自《我想做一个关于父亲的故事。》v5」 |
+| 配方继承 | ✅ | structureJson 字节级相等（DB 断言） |
+| Intent 语境继承 | ✅ | rawExpression 复制（新作者从原作意图出发） |
+| 副本自有像素 | ✅ | regenerate 后全部 image.shot/audio.tts 重记（agnes 图 + zai-tts） |
+| 原作零改动 | ✅ | 字段级快照 diff：Content/versions/intents/publication/provenance/assets 全部零变动（仅追加 remix_received 事件，只追加不变量） |
+| 衍作可继续修改 | ✅ | 修改 1「把父亲换成母亲」：4/4 镜（主角替换合理全改）v2；修改 2「结尾旁白轻一点」：2/4 镜 narrationLine v3（audio 级定位，影响镜头 [3,4]） |
+| 新作者独立发布 | ✅ | 衍作品 PUBLISHED（visibility=public） |
 
-**阻塞原因**：副本再生成需图像配额。
+**Remix Graph**：源作 5 版（v1 初稿 + 4 修订）→ 衍作 3 版（v1 remix + 2 修订）→ remix 记录 1 条（血缘可继续下探，历史共 15 条 Remix 在库）。
+
+**诚实记录（测试装置缺陷，已修复）**：run-remix-chain 第 7 步用修订循环前的旧 state 对象保存，把 revisions 记账踩空——DB 权威数据无损，state 已从 DB 版本链重建（repair-g4-state.mjs）；脚本已修复（重载后再写）。此为脚本侧缺陷，非应用缺陷。
 
 ---
 
@@ -190,6 +203,14 @@ Alpha 的成本记账以**调用次数 + 延迟**为代理（provider 未返回�
 **结论：当前组合式管线生成的是"静态画面 + 音频 + 转场的 MP4"**——被精确量化（YDIF≈1.0，仅为 Native 的一半；真实实拍视频通常 3–8）。运镜（推拉摇移）提供了镜头运动感，无静止帧，音画对齐良好；但**人物不动、环境不动**，对人物故事/情绪/想象类表达的"被看见价值"构成上限。
 
 ### 6.2 双路径（按指令建立，未推翻管线）
+
+**Gate 6b Native Golden Case 终版（2026-10-06 21:15，混合降级形态完成）**：
+
+- **执行**：dev server 以 IMAGINEOS_FORCE_NATIVE=1 运行，「夏夜追萤火虫」全链真实驱动（45s 短片，5 镜）；
+- **视频通道真实状态**：video.shot 共 28 次尝试——agnes 队列满 503（提交重试后失败）自动降级 `zai-video/cogvideox-3`，其中 1 镜真 native 成功（68.6s），其余 4 镜全候选失败后按设计回落 composition（Ken Burns）；
+- **成片度量（A 级，可复现）**：43s / 720×1280 / 零冻结段；帧内 YDIF 均值 0.549（混合形态，非纯 native 口径）vs G3 composition 基线 0.665；
+- **回落机制验证**：4 次 native-fallback Provenance 事件逐镜记账（错误原因/provider 序列完整），成片仍完整发布——降级链路按设计工作；
+- **诚实结论**：**全镜 native 未达成**（外部约束：agnes 队列满 + zai 视频配额），本次为混合降级证据；纯 native 单镜能力另有 A 级证据（agnes-video-verify.mp4：278s 全链、704×1280、10-06 20:19 队列窗口内成功）。队列窗口重开时可一键重跑：`bash scripts/m15/restart-dev.sh native && node scripts/m15/run-native-golden.mjs`。
 
 - **Composition 保留**：成本/延迟/确定性优势（Alpha 基线 + 分镜级局部重生成的支撑）；
 - **Native Video Provider Adapter 已真实接入**：`video.shot` 能力（cogvideox-3 图生视频，首帧来自分镜图像）→ 合成层 `videoPath` 分叉 → 同一 xfade/字幕/音频编排 → 同一 Generation 记账与评测框架；
@@ -254,31 +275,32 @@ Alpha 的成本记账以**调用次数 + 延迟**为代理（provider 未返回�
 
 ---
 
-## 10. 阻塞项与恢复路径（透明记录；2026-10-06 多 Provider 联调更新）
+## 10. 阻塞项终版（2026-10-07 Phase B 补跑后重写：全部阻塞已清或转为外部约束）
 
-**阻塞结构已改变**：LLM/Image 通道经 agnes-com 自定义 Provider 已畅通（§0.5）；剩余阻塞收敛为 **TTS 通道无可用 Provider**（agnes 无 TTS 模型 + z-ai 429 冷却）与 **agnes 视频队列满（503）**。后台守望器（`scripts/quota-watcher.mjs`，孤儿化进程）每 150s 探测两项，恢复即立旗触发补跑。
+**Phase B 四项全部执行完毕**：p10 ✅发布（10-06 20:48）→ Gate 3 四连改 ✅完成并发布（10-06 21:00）→ Gate 4 Remix 链 ✅全通过（10-06 21:10）→ Native Golden Case 🔶混合降级完成（10-06 21:15，1/5 镜真 native）。终版度量：13/13 案例发布、M1.5 生产案例 0 错 0 警。
 
-| 项 | 状态 | 恢复动作 | 依赖 |
-|----|------|----------|------|
-| p10 发布 | 配方/分镜/部分资产完成 | `node scripts/m15/run-cases.mjs p10-cause`（failed Job 自动 regenerate 重入） | z-ai TTS 恢复 |
-| Gate 3 四连改 | 脚本就绪（未启动） | `node scripts/m15/run-revision-chain.mjs` | z-ai TTS 恢复 |
-| Gate 4 Remix 链 | 脚本就绪（依赖 Gate 3） | `node scripts/m15/run-remix-chain.mjs` | z-ai TTS 恢复 |
-| Native Golden Case | 协议适配完成 + 单测覆盖 | `bash scripts/m15/restart-dev.sh native && node scripts/m15/run-native-golden.mjs && bash scripts/m15/restart-dev.sh composition` | z-ai TTS + agnes 视频队列 |
+原阻塞项收敛情况：
 
-一键补跑（含等待-触发-模式切换-终版度量全链）：`node scripts/m15/finish-m15.mjs`（多 Provider 版：等 TTS → p10/G3/G4 → Native Golden → 终版数据；幂等断点续跑）。
-预计 TTS 恢复后实际执行时长 ~40–60 分钟。
+| 原阻塞项 | 终态 | 说明 |
+|----------|------|------|
+| z-ai TTS 配额（p10/G3/G4 依赖） | ✅ 已解除 | 10-06 16:01 恢复；后续间歇性再冷却是恢复窗口内的波动，被重试/regenerate 重入吸收 |
+| agnes 视频队列满（Native Golden 依赖） | 🔶 转为长期外部约束 | 队列间歇开放（10-06 20:14 窗口验证过 278s 全链）；Golden Case 本次以混合降级形态完成；队列窗口重开时一键重跑 `bash scripts/m15/restart-dev.sh native && node scripts/m15/run-native-golden.mjs` |
+| 测试装置缺陷（补跑过程中发现并修复） | ✅ 已修复 | ① lib.mjs 僵死态误判（failed Job 不在 activeJob 返回集）② run-revision-chain 发布后漏戳 state.phase ③ run-remix-chain 旧 state 覆盖踩空 revisions——均为脚本侧，应用层无缺陷 |
+| 编排器进程被外部 SIGKILL | ⚠️ 环境层风险 | 三次击杀（oom_kill=0，非 OOM；dev server 同期稳定存活）——已改为前台分块执行策略完成全部补跑；后续长时间编排建议沿用分块模式 |
+
+**结论**：应用层无未修复缺陷；剩余唯一未闭环项 = 全镜 native Golden Case，受外部视频配额约束，具备随时重跑能力与既有混合降级证据。
 
 ## 11. 交付物清单
 
 | # | 交付物 | 状态 |
 |---|--------|------|
-| 1 | 10 个真实创作案例（含指标） | ✅ 9 发布 + 1 阻塞（数据在 `scripts/m15/state/`） |
-| 2 | Visual Quality Report | ✅ `m15-visual-quality-report.md`（证据分级 A/B/C） |
-| 3 | Revision Evaluation | 🔶 机制层 ✅ / 四连改链 ⏸（`m15-revision-report.md`） |
-| 4 | Remix Evaluation | 🔶 机制层 ✅ / 专项链 ⏸（`m15-remix-report.md`） |
+| 1 | 10 个真实创作案例（含指标） | ✅ 10/10 发布（p10 已补齐；数据在 `scripts/m15/state/`） |
+| 2 | Visual Quality Report | ✅ `m15-visual-quality-report.md`（证据分级 A/B/C + Native Golden 终版） |
+| 3 | Revision Evaluation | ✅ `m15-revision-report.md`（四连改完成，局部性达标） |
+| 4 | Remix Evaluation | ✅ `m15-remix-report.md`（专项链全通过，原作零改动） |
 | 5 | Content Integrity Report | ✅ `m15-content-integrity-report.md`（0 错 0 警 + 媒体真实性披露） |
-| 6 | Cost Report | ✅ `m15-cost-report.md`（DB 权威记账） |
+| 6 | Cost Report | ✅ `m15-cost-report.md`（DB 权威记账 + 四通道定价） |
 | 7 | Latency Report | ✅ §1.2（修正口径）+ Cost Report §3 |
 | 8 | Human Test Plan | ✅ `human-test-plan.md`；系统侧就绪验证 + 报告模板 ✅ `m15-human-test-report.md` |
-| 9 | M1.5 Decision Report | ✅ `m15-decision-report.md`（Q1–Q7；待补项标注） |
-| 10 | 一键恢复编排器 | ✅ `scripts/m15/finish-m15.mjs`（含 native 模式切换与 failed Job 重入） |
+| 9 | M1.5 Decision Report | ✅ `m15-decision-report.md`（Q1–Q7 终版收口） |
+| 10 | 一键恢复编排器 | ✅ `scripts/m15/finish-m15.mjs`（含 native 模式切换与僵死态 regenerate 重入；建议前台分块执行） |

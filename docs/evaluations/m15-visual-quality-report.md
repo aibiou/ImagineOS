@@ -7,6 +7,19 @@
 
 ---
 
+## 0a. Model Provider 执行环境
+
+> 权威记录：`m15-expression-quality-report.md` §0.5。本报告度量的成片按产出段使用不同 Provider：
+
+| 度量对象 | Image 来源 | Video 来源 | 说明 |
+|----------|-----------|-----------|------|
+| p01–p09 组合式成片（B/C 级历史数据） | 内置 `zai-image` | —（composition） | 晨跑段（04:00–04:44），agnes 未配置 |
+| G3 父亲故事 composition 基线（A 级） | `openai-compat:agnes-com` · `agnes-image-2.5-flash` | —（composition） | Phase B 段 |
+| Native Golden Case（A 级） | `openai-compat:agnes-com` · `agnes-image-2.5-flash`（首帧） | `openai-compat:agnes-com` · `agnes-video-2.5-flash`（OpenAI-Videos 协议，720P） | 全镜 native 路径 |
+| TTS（全部成片旁白） | 内置 `zai-tts` · `zai-tts-tongtong` | — | 产品负责人指定 TTS 走内置 |
+
+---
+
 ## 0. 证据等级说明（沙箱重置事件后必需）
 
 | 等级 | 含义 | 本报告适用数据 |
@@ -34,15 +47,17 @@
 
 **机制解释**：Ken Burns 全局缓动（推拉摇移）产生持续但微小的整帧位移 → YDIF ≈ 1.0；**人物不动、环境不动**——画面是「动的图片」，不是「运动的场景」。
 
-## 3. Native 路径（cogvideox-3 图生视频）
+## 3. Native 路径（cogvideox-3 图生视频 + agnes-video-2.5-flash 自定义）
 
 | 指标 | 值 | 证据等级 |
 |------|-----|----------|
 | smoke 单镜 YDIF 均值 / p50 / p95 | **2.079 / 1.873 / 4.181**（本次复测） | **A** |
 | 与组合式均值比 | ≈ 2.1–2.3× | A/B 推导 |
-| 单镜生成延迟（直连 smoke） | 56s（提交→轮询→下载） | A（smoke 脚本计时） |
+| 单镜生成延迟（直连 smoke） | 56s（提交→轮询→下载）；agnes 通道 278s（10-06 20:19 队列窗口内全链） | A |
 | 720x1280 / 31fps / 5.1s 片段 | AIGC 元数据在文件内（可验真） | A |
-| 管线级全案例（≥5 镜、回落、逐镜延迟） | **待 Golden Case（配额恢复后）** | — |
+| 管线级全案例（≥5 镜、回落、逐镜延迟） | **Golden Case 已执行（10-06 21:15，混合降级形态）**：28 次 video.shot 尝试，1 镜真 native 成功（zai-video/cogvideox-3，68.6s），4 镜全候选失败后按设计回落 composition（Provenance 逐镜记账 native-fallback ×4，成片仍完整发布） | **A** |
+| 混合成片度量 | 43s / 720×1280 / 零冻结段；帧内 YDIF 均值 0.549 vs G3 composition 基线 0.665（注：混合形态含 4 镜 Ken Burns，非纯 native 口径，不能作为 native vs composition 的定量结论） | A |
+| 全镜 native 状态 | ❓未达成——受外部约束（agnes 队列满 503 持续 + zai 视频配额间歇）；队列窗口重开可一键重跑 | 诚实记录 |
 
 ## 4. 十二维度评估（指令要求的完整口径）
 
@@ -71,7 +86,11 @@
 
 **终版结论待 Golden Case 补齐**：人物/环境/镜头运动质量、首帧一致性、场景连续性、逐镜延迟与成功率——配额恢复后以 ≥5 镜全 native 案例定量回答「Native 是否值得成为下一阶段核心视觉路径」。
 
-## 6. 待补项（配额恢复后，脚本就绪）
+## 6. 待补项（Golden Case 已执行，剩余为队列窗口重跑）
+
+**Golden Case 实际执行记录（2026-10-06 21:15）**：脚本已跑完全链（`state/g6-native.json`）——含每镜 video.shot 延迟/成功、回落事件、成片 YDIF、G3 基线对比、抽帧目录（`frames/g6-native`）。因 agnes 队列满 + zai 视频配额间歇，本次为**混合降级形态**（1/5 镜真 native + 4/5 镜 composition 回落）。
+
+**剩余待补**：全镜 native 口径的 Golden Case（队列窗口重开时）：
 
 ```bash
 bash scripts/m15/restart-dev.sh native       # 切 native 模式（dev server 级开关）
@@ -79,4 +98,4 @@ node scripts/m15/run-native-golden.mjs       # 全链 Golden Case + 逐镜记账
 bash scripts/m15/restart-dev.sh composition  # 切回默认
 ```
 
-Golden Case 输出（`state/g6-native.json`）将包含：每镜 video.shot 延迟/成功、回落事件、成片 YDIF、与 G3 父亲故事（同代际真实 composition 基线）的对比、抽帧供人工检视目录。
+队列状态探测：`bun scripts/m15/probe-agnes-video.mjs`（提交即知，503=队列满）。

@@ -79,10 +79,12 @@
 |------|------------------|----------|-------------------------------------------|
 | LLM | `openai-compat:agnes-com` / `agnes-3.0-flash` | 5.3–30.6s（JSON 结构化输出任务） | **$0**（牌价：input $0.05/M · output $0.15/M · cached $0.005/M） |
 | Image | `openai-compat:agnes-com` / `agnes-image-2.5-flash` | 8.7–13.4s / 张（768×1344） | **$0**（牌价：1K $10/千张 · 2K $18 · 3K $21 · 4K $24） |
-| TTS | `zai-tts` / `zai-tts-tongtong`（兜底） | 1.9s（配额可用时） | z-ai 内部配额（沙箱平台提供） |
-| Video | `openai-compat:agnes-com` / `agnes-video-2.5-flash` | 提交后生成 ~45–60s/镜（官方样例 45s；队列满时退避重试） | **$0**（牌价：$0.025/秒 @720P） |
+| TTS | `zai-tts` / `zai-tts-tongtong`（内置；产品负责人指定 TTS 走内置，无自定义） | 恢复窗口 127 次成功（均值 ~0.95–1.9s/条）；冷却窗口 127 次 429——重试与 regenerate 重入吸收 | z-ai 内部配额（沙箱平台提供） |
+| Video | `openai-compat:agnes-com` / `agnes-video-2.5-flash`（降级 `zai-video`/cogvideox-3） | agnes 队列窗口内全链 278s/镜；zai cogvideox 68.6s/镜（Golden Case 实测）；队列满时 503 退避重试 ×3 | **$0**（牌价：$0.025/秒 @720P） |
 
 **成本口径说明**：本报告 §1 的「调用次数 + 延迟 + 资产字节」代理指标继续有效；agnes-com 当前免费期的实际金额成本为 $0（其记账以请求数与 token 用量为准，Generation.usageJson 已采集 token 数）。若免费期结束，按牌价估算单案例成本：LLM ~8.6 次 × (~2K tokens 输入+1K 输出) ≈ $0.0002 + 图像 ~10.9 张 ≈ $0.11 + 视频 5 镜 × 5s ≈ $0.63 —— 即 **~$0.75/案例（全 agnes 牌价）**，Alpha 量级完全可承受。
+
+**Phase B 补跑后的实际消耗补充（2026-10-06/07）**：G3 四连改（5 版全链）+ G4 Remix（副本全重生成 + 2 修订）+ p10 重入 + Native Golden（含 28 次视频尝试）全部走 agnes LLM/Image/Video 与内置 zai-tts——实际金额 $0（agnes 限时免费期 + z-ai 沙箱配额）。牌价口径估算：Phase B 新增 ~60 次图像 + ~40 次 LLM + 28 次视频提交 + ~80 次 TTS ≈ $0.7–0.9（视频占主导）。
 
 ## 6. 待补项（配额恢复后）
 

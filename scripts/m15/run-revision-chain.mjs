@@ -71,6 +71,16 @@ async function main() {
     await c2.post(`/api/contents/${contentId}/publish`, { visibility: 'public' })
     console.log(`\n[${ts()}] 最终版已发布（v${versions[versions.length - 1].versionNumber}）`)
   }
+  // 发布后戳记 state.phase（Gate 4 / Native Golden 的前置检查读的是断点文件而非 DB——
+  // 旧版漏戳导致链式交接永远失败，2026-10-07 补）
+  const publishedState = loadState(CASE_ID)
+  if (publishedState.phase !== 'published') {
+    publishedState.phase = 'published'
+    publishedState.timeline = publishedState.timeline ?? {}
+    publishedState.timeline.published = new Date().toISOString()
+    saveState(CASE_ID, publishedState)
+    console.log(`[${ts()}] state.phase → published（Gate 4 / Native Golden 前置就绪）`)
+  }
 
   await db.$disconnect()
   console.log(`\n[${ts()}] Gate 3 完成：${loadState(CASE_ID).revisions.length} 次修订`)

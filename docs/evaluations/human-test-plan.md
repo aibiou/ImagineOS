@@ -3,6 +3,17 @@
 > ImagineOS Alpha · 2026-10-06 · 状态：Ready-to-run
 > 本计划回答一个问题：**普通人在没有被告知"怎么用"的情况下，能否把心里想表达的东西变成一件让他们自己满意的作品？**
 
+## 0a. Model Provider 执行环境
+
+> 权威记录：`m15-expression-quality-report.md` §0.5。测试期间系统路由（对被试透明，不影响任务指令）：
+
+| 通道 | 首选 | 兜底 |
+|------|------|------|
+| LLM | `openai-compat:agnes-com` · `agnes-3.0-flash` | `zai-chat` |
+| Image | `openai-compat:agnes-com` · `agnes-image-2.5-flash` | `zai-image` |
+| TTS | 内置 `zai-tts` · `zai-tts-tongtong`（产品负责人指定，无自定义） | —（同通道重试） |
+| Video（如触发 native） | `openai-compat:agnes-com` · `agnes-video-2.5-flash` | — |
+
 ## 1. 目的与可证伪假设
 
 Gate 1–6 验证的是机器侧（管线质量、数据完整性）。Gate 7 验证人这一侧。北极星指标 Expression Success Rate 只能由真人测试度量，实验室脚本无法替代。本轮测试对应项目宪章中的四个假设：

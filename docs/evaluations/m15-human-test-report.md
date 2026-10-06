@@ -6,13 +6,26 @@
 
 ---
 
+## 0a. Model Provider 执行环境（真人测试期间生效配置）
+
+> 权威记录：`m15-expression-quality-report.md` §0.5。真人测试执行时系统实际路由（Registry 动态链，自定义优先 → 内置兜底）：
+
+| 通道 | 首选（自定义） | 兜底（内置） | 说明 |
+|------|---------------|-------------|------|
+| LLM | `openai-compat:agnes-com` · `agnes-3.0-flash` | `zai-chat` | 自定义失败自动降级 |
+| Image | `openai-compat:agnes-com` · `agnes-image-2.5-flash` | `zai-image` | 降级已实测（agnes 6 连败 → zai-image 接管） |
+| TTS | —（无自定义，产品负责人指定 TTS 走内置） | `zai-tts` · `zai-tts-tongtong` | z-ai 配额间歇 429 时 narration 重试吸收 |
+| Video | `openai-compat:agnes-com` · `agnes-video-2.5-flash` | `zai-video` · `cogvideox-3` | 仅 native 模式路径；agnes 队列满时自动降级内置视频 |
+
+---
+
 ## 0. 系统侧就绪声明（2026-10-06 验证）
 
 | 就绪项 | 验证方式 | 状态 |
 |--------|----------|------|
 | Session ↔ Content 关联 | 匿名会话（imagineos_sid cookie）→ User → Content.ownerId；`ContentVersion.createdBy` 记录每一次修订的操作者 | ✅ 已验证（DB 抽查） |
 | 修订关联用户 | ContentVersion.createdBy + creationMethod=revision + changelog 保存用户原话 | ✅ |
-| 发布记录 | Publication 表 + Provenance `published` 事件（15 条发布在库） | ✅ |
+| 发布记录 | Publication 表 + Provenance `published` 事件（终版 20 条发布在库） | ✅ |
 | Remix 记录 | Remix 血缘三件套 + remixerId + 双侧 Provenance 事件（8 条在库） | ✅ |
 | Repeat Creation 记录 | 同一 ownerId 多作品计数（`export-human-test.mjs` 自动推导 repeatCreation） | ✅ |
 | 结果可导出 | `node scripts/m15/export-human-test.mjs --since="<测试开始时刻>"` → `state/human-test-export.json`（六指标汇总 + 每被试明细） | ✅ 实测可运行 |

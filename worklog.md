@@ -289,3 +289,23 @@ Stage Summary:
 - 指令§4 报告 Provider 信息已入档（主报告 §0.5 + 成本报告 §5.5）
 - Phase B（指令§2）armed 未跑：唯一硬阻塞 = TTS 通道无可用 Provider（外部配额，不可绕过）；编排器后台待命，TTS 恢复自动执行全链
 - 诚实记录（指令§3）：失败原因全部入档——TTS=agnes 无模型+z-ai 429；Video=agnes 服务端队列满 503
+
+---
+Task ID: m15-phase-b-integration-002
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人后续指令——TTS 使用内置；完成 Phase B 补跑收口 + 全部评估报告 Provider 信息终版 + Final Decision Report Q1–Q7 收口
+
+Work Log:
+- 状态接管：发现上一 session 的后台编排器已自动执行过一轮（TTS 16:01 恢复 → p10/G3 部分跑 → 16:39 阶段性完成；agnes 视频队列 20:14 放行 → 20:19 全链旗）但 worklog 未记录、关键项卡死
+- 根因诊断（DB 级）：① p10 卡 GENERATING+job=null——lib.mjs 僵死重入判断写反（creation API 的 job 字段只返回活跃 Job，failed 不在列，旧条件永远不命中）；② G3 修订 3（v4）创建成功后 storyboard Job 被 z-ai TTS 二次 429 击杀（16:26，audio.tts 全候选失败）；③ G3 修订 4（v5）生成完成后编排器进程树被外部 SIGKILL（3 次，oom_kill=0 非 OOM，dev server 同 PID 存活）——改前台分块执行策略对抗
+- 三个测试装置缺陷修复（应用层零缺陷）：① lib.mjs 僵死态判定改为「GENERATING 且无活跃 Job → regenerate」② run-revision-chain 发布后补 state.phase 戳记（G4/NativeGolden 前置检查读断点文件）③ run-remix-chain 第 7 步重载 state 再写（旧对象覆盖踩空 revisions）
+- Phase B 补跑全部完成（真实记录）：p10 regenerate 重入 68s 发布（5 镜 42.6s，image 走 agnes）；G3 四连改 v1→v5 发布（定位精度 4/4：style/台词 shot/单镜/尾镜级；局部性 4/4→2/4→1/4→2/4 镜；修订 3/4 为恢复模式如实标注）；G4 Remix 链全通过（血缘三件套/配方字节继承/原作字段级零改动/衍作 3 版独立发布）；Native Golden 混合降级形态完成（28 次 video.shot 尝试 1 成功 = zai cogvideox 68.6s，4 镜回落 composition，Provenance 逐镜记账，成片 43s 零冻结段 YDIF 0.549 vs G3 基线 0.665）——全镜 native 未达成（agnes 队列满 503 持续，终次探测仍满），预注册标准不因新模型修改：裁决「并行深化，不升主线」
+- 终版度量：13/13 案例发布；M1.5 生产案例 0 错 0 警（六表断言全过）；text.plan 112/112 成功；image 168✓/80✗；tts 127✓/127✗（间歇 429 被重试+重入吸收）；fallback 铁证 agnes-image 6 连败→zai-image 接管
+- 报告终版更新（10/10 份含 Model Provider 信息）：主报告（§0 执行摘要/§0.5 矩阵/§1.1 p10 行/§3 Gate3/§4 Gate4/§6.2 Gate6b/§10 阻塞终版/§11 清单）；revision/remix/visual/integrity/cost/decision/human-test×2/README 全部补 Provider 矩阵（两段真实配置：晨跑段全内置 z-ai vs Phase B 段 agnes+zai-tts，DB 时间戳佐证非事后改写）；成本报告补 Phase B 实际消耗（$0，牌价估算 $0.7–0.9）
+- Decision Report Q1–Q7 终版收口：Q1 达成度 85%→95%（剩余=全镜 native+Gate7）；Q2 Revision/Remix 移出短板；Q3 裁决并行深化；Q4 判定可靠（含 22.8s 定位延迟边界）；Q5 机器侧行为链闭环；Q6 唯一未满足条件=Gate 7 真人测试；Q7 主线 A 视觉质量深化（含 Q3 联动提醒）
+- 门禁：vitest 64/64 全绿（src/ 零改动）；dev server 已切回 composition 模式；新增 probe-agnes-video.mjs（队列提交即知探测）+ supervise-finish.sh（监督者，本轮被击杀未用上，保留作环境风险记录）
+
+Stage Summary:
+- 指令全部落地：模型配置链路上 session 已验证（非 UI 摆设）→ Phase B 四项补跑完成（Native Golden 为诚实混合形态）→ 10/10 报告 Provider 信息齐备 → Final Decision Report 收口 → M2 启动唯一剩余条件 = Gate 7 真人测试
+- 真实性原则执行：评估标准零修改；失败/回落/恢复全程入档（TTS 二次 429、agnes 6 连败降级、28 次视频尝试 1 成功、3 个脚本缺陷+修复）
+- 环境新知：沙箱存在针对后台 node/bash 进程的 SIGKILL（dev server 豁免）——长编排必须前台分块执行

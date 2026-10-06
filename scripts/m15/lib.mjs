@@ -315,14 +315,18 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
 
   if (state.phase === 'generating') {
     // 失败恢复入口（M1.5 缺陷修复②的脚本侧闭环）：
-    // GENERATING + Job failed（如 429 重试耗尽）时，waitForStatus 会立即抛错；
-    // 这里检测到 failed Job 先走 regenerate 重入（API 已接受 GENERATING 态），再继续等待。
+    // 僵死态判定 = GENERATING + 无活跃 Job。creation API 的 job 字段来自 activeJobForContent
+    // （仅返回 queued/claimed/running），failed/timeout 的 Job 不会返回——旧判断
+    // probe.job.status === 'failed' 永远无法命中，导致 429 重试耗尽后的案例干等 900s 超时
+    // （2026-10-06 p10 复盘根因）。regenerate API 已接受 GENERATING 态（assertNoActiveJob
+    // 只挡活跃 Job，failed 不挡）——同 Version 换新 Job。
     const probe = await client.get(`/api/contents/${state.contentId}/creation`)
-    if (probe.job && (probe.job.status === 'failed' || probe.job.status === 'timeout')) {
-      console.log(`  [${caseId}] 检测到失败 Job（${probe.job.type}），走 regenerate 重入`)
+    const stalled = !probe.job && probe.content?.status === 'GENERATING'
+    if (stalled) {
+      console.log(`  [${caseId}] 检测到僵死态（GENERATING 且无活跃 Job），走 regenerate 重入`)
       const reg = await client.post(`/api/contents/${state.contentId}/regenerate`, {})
       state.record.generateJobId = reg.jobId
-      state.record.recoveredFromFailedJob = { at: new Date().toISOString(), prevJobStatus: probe.job.status }
+      state.record.recoveredFromFailedJob = { at: new Date().toISOString(), via: 'stalled-generating regenerate' }
       persist()
     }
     const data = await waitForStatus(client, state.contentId, 'REVIEW', { timeoutMs: 900_000 })

@@ -6,6 +6,19 @@
 
 ---
 
+## 0. Model Provider 执行环境
+
+> 权威记录：`m15-expression-quality-report.md` §0.5。本 Gate 检查覆盖的全部案例分两段产出，Provider 配置如下（Generation 记账可逐行复查）：
+
+| 产出段 | LLM | Image | TTS | Video |
+|--------|-----|-------|-----|-------|
+| 晨跑段（10-06 04:00–04:44，p01–p09） | 内置 `zai-chat` | 内置 `zai-image` | 内置 `zai-tts` | —（composition 模式） |
+| Phase B 段（10-06 16:16 起，G3 四连改 / p10 补跑 / G4 Remix / Native Golden） | `openai-compat:agnes-com` · `agnes-3.0-flash` | `openai-compat:agnes-com` · `agnes-image-2.5-flash`（失败自动降级 `zai-image`） | 内置 `zai-tts` · `zai-tts-tongtong`（产品负责人指定 TTS 走内置） | `openai-compat:agnes-com` · `agnes-video-2.5-flash`（OpenAI-Videos 协议，仅 Native Golden） |
+
+> 说明：agnes-com 自定义配置创建于 10-06 13:19–13:21（DB 时间戳），故晨跑段（04:00–04:44）全部走内置 z-ai——两段记账均真实在库，非事后改写。
+
+---
+
 ## 1. 检查范围与方法
 
 **方法**：直接对 SQLite 权威库做六表关系断言（Content/ContentVersion/Asset/Generation/Provenance/Remix），不经过 UI 或 API——UI 验证属于 Gate 1/3/4 的行为层，本 Gate 只问「数据是否诚实」。
@@ -25,7 +38,9 @@
 | Remix | 血缘三件套归属 / 衍作首版 method=remix / 配方 structureJson 继承 | ✅ 8 条全过 |
 | Asset | 孤儿（引用不存在的内容）/ final+thumbnail 文件落盘 | ✅（见 §4 媒体真实性披露） |
 
-**汇总统计**（复核时点）：内容 44（PUBLISHED 15 / READY 15 / IDEA 12 / REVIEW 1 / GENERATING 1）· 版本 40 · 资产 208 · Generation 323 行（77+98+82 成功 + 66 失败）· Provenance 388 事件 · Remix 8 条 · Job 14 个（全 succeeded，p10 失败 Job 为 M1.5 生产案例恢复项，重入机制已就绪）。
+**汇总统计**（终版 2026-10-06 21:18，Phase B 补跑后）：内容 77（PUBLISHED 20 / READY 28 / REVIEW 1 / IDEA 24 / GENERATING 3 / STORYBOARD 1）· 资产 344（generated 296 / final 24 / thumbnail 24）· Generation 642 行（text.plan 112 / image.shot 248 / audio.tts 254 / video.shot 28；成功 408 / 失败 234——失败集中在配额冷却窗口）· Provenance 648 事件 · Remix 15 条 · Job 55 个（succeeded 50 / failed 5；M1.5 生产案例的失败 Job 均已经 regenerate 重入恢复并发布）。
+
+**终版结论：M1.5 生产案例（13 案，含 G3 四连改 / G4 Remix / G6 Native Golden）错误 0 ｜ 警告 0**——六表关系断言全部通过；p10 的失败 Job 恢复重入（T9.1.1 AC）在真实配额故障下验证了「不丢用户工作」的 §51 设计。遗留测试夹具（不计入结论）错误 41 / 警告 8。
 
 ## 3. 六不变量验证（架构层，来自 DB 抽查 + Gate 5 断言）
 

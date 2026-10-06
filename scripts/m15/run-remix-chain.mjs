@@ -122,13 +122,19 @@ async function main() {
   if (derivativeStatus?.status === 'READY') {
     console.log(`\n[${ts()}] Remix 衍作品发布验证（新作者自己的发布动作）`)
     await remixer.post(`/api/contents/${derivativeId}/publish`, { visibility: 'public' })
-    state.derivativePublished = true
-    state.cookies = remixer.dump()
-    saveState(G4_ID, state)
+    // 重载 state 再写——外层 state 快照早于修订循环，直接保存会把 applyRevisionStep
+    // 追加的 revisions 踩空（2026-10-07 复盘发现的测试装置缺陷）
+    const fresh = loadState(G4_ID)
+    fresh.derivativePublished = true
+    fresh.cookies = remixer.dump()
+    fresh.phase = 'published'
+    saveState(G4_ID, fresh)
   } else if (derivativeStatus?.status === 'PUBLISHED') {
     console.log(`[${ts()}] Remix 衍作品已发布（断点续跑）`)
-    state.derivativePublished = true
-    saveState(G4_ID, state)
+    const fresh = loadState(G4_ID)
+    fresh.derivativePublished = true
+    fresh.phase = 'published'
+    saveState(G4_ID, fresh)
   }
 
   // ---- 8) Remix Graph 汇总 ----

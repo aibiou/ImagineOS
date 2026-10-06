@@ -25,6 +25,19 @@
 
 换模型 / 换 Prompt / 换 Orchestrator / 换生成策略——一条命令输出 GoldenRun 报告（成功率、字段准确率、修订定位准确率、平均成本、P50/P95 延迟），与上一 Run 对比，回归超阈值阻断合并。
 
+## Model Provider 执行环境（M1.5 收口期）
+
+> 权威记录：`m15-expression-quality-report.md` §0.5。系统经「设置 → 模型服务」支持 OpenAI 兼容自定义 Provider（ADR-0004），Registry 动态链：自定义优先（priority 升序）→ 内置 z-ai 兜底，失败自动降级。M1.5 收口期真实配置：
+
+| 通道 | 自定义（首选） | 内置（兜底） |
+|------|---------------|-------------|
+| LLM | `openai-compat:agnes-com` · `agnes-3.0-flash` | `zai-chat` |
+| Image | `openai-compat:agnes-com` · `agnes-image-2.5-flash` | `zai-image`（降级已实测） |
+| TTS | —（产品负责人指定 TTS 走内置） | `zai-tts` · `zai-tts-tongtong` |
+| Video | `openai-compat:agnes-com` · `agnes-video-2.5-flash` | `zai-video` · `cogvideox-3` |
+
+> 换 Provider/模型属回归触发器范围：任何通道变更后须重跑 GoldenRun 并在报告中标注新 Provider 信息（用户指令：所有评测报告须标注每个通道的真实 Provider/Model）。评估标准不随 Provider 变更而修改。
+
 ## Alpha 指标（§61–§62，M5 起可计算）
 
 - **Expression Success Rate（北极星）**：输入意图→完成自认可作品
