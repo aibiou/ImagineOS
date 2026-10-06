@@ -182,3 +182,30 @@ Stage Summary:
 - /goal 目标达成度：Phase A（非配额依赖项）100% 完成；Phase B（配额依赖项）blocked 于 provider 冷却，无伪造、无遗漏
 - M1.5 总体 ≈85%；决策报告已可读，4 个 ⏸ 待补项全部有预注册判定标准
 - 恢复路径：配额恢复 → bun scripts/m15/finish-m15.mjs（幂等、断点续跑）→ 报告终版更新 → 决策报告收口
+
+---
+Task ID: multi-provider-001
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 自定义模型服务配置能力（产品负责人 2026-10-06 战略切换指令：不等待 429，开发多 Provider 最小闭环）
+
+Work Log:
+- 读码定缝：Model Router 本即链式设计（registerProvider/fallback/逐次记账）→ 改造点收敛为「静态链 → 配置动态链」
+- 数据层：ModelProviderConfig 表（纯新增，channel/enabled/priority 索引，无破坏迁移；prisma 相对路径陷阱实测——意外创建 prisma/db/ 已清理，真实库数据完好 45 内容/208 资产）
+- 领域层：src/core/settings/provider-config-service.ts（CRUD + zod 校验 + 密钥打码前3后4 + 掩码哨兵=不修改 + 连接测试 GET /models 零消耗 + 变更通知钩子避免 core→ai 反向依赖）
+- AI 层：src/ai/router/provider-config.ts（TTL 3s 缓存 + 写后即时失效）；registry.ts 新增 buildChainsFromConfigs（自身保证 priority 升序）+ ensureChainsFresh（测试环境显式关闭，保护 clearRegistry 语义）+ isNonRetryable（401/403/不兼容协议跳过重试立即降级）
+- 适配器：src/ai/providers/openai-compat.ts 纯 fetch 零 SDK——LLM(chat/completions)/图像(images/generations，兼容 b64_json/base64/url 三形态)/TTS(audio/speech)/视频(video/submit+status 轮询，实验性，不兼容时报明确错误自动降级)
+- API：/api/settings/model-providers（GET 打码/POST/PATCH/DELETE/test 五端点）
+- UI：/settings/models 页面（四通道卡片 + 预置服务商一键填充 OpenAI/DeepSeek/SiliconFlow/Moonshot/智谱 + 启停开关 + 优先级 + 连接测试徽章）；首页导航新增「模型服务」入口
+- ESLint 边界修正：API 层禁直触 db → 全部走 core 领域服务（第一次 lint 失败后重构，架构守卫有效性的又一次实证）
+- 门禁：typecheck ✓ / lint ✓ / vitest 48/48（新增 14：链排序/停用排除/掩码/四能力请求形态/401 判定/视频轮询）
+- E2E 实测（scripts/e2e-custom-provider.mjs）：本地 mock OpenAI 兼容服务 → 配置 201 + 密钥打码 → 连接测试 19ms → 真实创作流程 text.plan 记账 = openai-compat:Mock 模型 / mock-llm-1 / succeeded（z-ai 429 冷却期完全未被触达）→ 删除后链回内置 → 全部 11 项断言通过
+- dev server 重启一次：旧进程持有过期 Prisma Client 不认识新表（500）→ restart-dev.sh 重启后恢复
+- 浏览器验收：/settings/models 渲染、添加表单、预置填充、console 零错误；截图 download/settings-models-{empty,addform}.png
+- 文档：ADR-0004 多模型服务 Provider 策略（Accepted，负责人直接指令）+ decisions 索引更新
+- Phase B 接力探测：z-ai 三通道（LLM/图像/TTS）13:00 UTC 仍全线 429——Phase B 现已具备「任意一家外部服务密钥即解锁」能力，等待配置真实密钥后跑 finish-m15.mjs
+
+Stage Summary:
+- 自定义模型服务配置最小闭环 100% 完成并 E2E 证明：配置保存 → 连接测试 → 生成链真实切换（记账可查）→ 失败自动降级 → 删除回归内置
+- 「不因单一模型 quota 限制阻塞 ImagineOS」已在架构层落地：任何 OpenAI 兼容服务的密钥即可解锁全部被阻塞评测
+- 密钥明文落库为 Alpha 单租户取舍（ADR-0004 已登记风险与后续路径）
+- 下一步：产品负责人在 /settings/models 配置任一外部服务（或提供密钥由本 agent 配置）→ 立即执行 finish-m15.mjs 完成 Phase B（p10/Gate3/Gate4/Native Golden Case）

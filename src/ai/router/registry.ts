@@ -13,6 +13,8 @@ import { zaiLlmProvider } from '@/ai/providers/zai-llm'
 import { zaiImageProvider } from '@/ai/providers/zai-image'
 import { zaiTtsProvider } from '@/ai/providers/zai-tts'
 import { zaiVideoProvider } from '@/ai/providers/zai-video'
+import { readProviderConfigs, type ProviderConfigRow } from '@/ai/router/provider-config'
+import { buildProviderFromConfig } from '@/ai/providers/openai-compat'
 import {
   ProviderExhaustedError,
   type AudioTTSPayload,
@@ -105,10 +107,88 @@ export function hasVideoShotProvider(): boolean {
   return videoShotChain.length > 0
 }
 
+// ---------- 动态链同步（ADR-0004：配置驱动的自定义 Provider） ----------
+
+// 纯函数：由配置行构建四条候选链（自定义优先级升序 → z-ai 内置兜底）。
+// 导出仅用于单测；生产链经 ensureChainsFresh() 写入下方四个 chain 数组。
+export function buildChainsFromConfigs(rows: ProviderConfigRow[]): {
+  text: TextPlanProvider[]
+  image: ImageShotProvider[]
+  audio: AudioTTSProvider[]
+  video: VideoShotProvider[]
+} {
+  const text: TextPlanProvider[] = []
+  const image: ImageShotProvider[] = []
+  const audio: AudioTTSProvider[] = []
+  const video: VideoShotProvider[] = []
+  // 自身保证 priority 升序（不信任调用方排序；次序为 createdAt 稳定兜底）
+  const sorted = [...rows].sort((a, b) => a.priority - b.priority || a.createdAt.getTime() - b.createdAt.getTime())
+  for (const row of sorted) {
+    const provider = buildProviderFromConfig(row)
+    if (!provider) continue
+    switch (provider.capability) {
+      case 'text.plan': text.push(provider as TextPlanProvider); break
+      case 'image.shot': image.push(provider as ImageShotProvider); break
+      case 'audio.tts': audio.push(provider as AudioTTSProvider); break
+      case 'video.shot': video.push(provider as VideoShotProvider); break
+    }
+  }
+  return { text, image, audio, video }
+}
+
+/** 签名：配置变更检测（id+updatedAt+enabled+priority） */
+function configSignature(rows: ProviderConfigRow[]): string {
+  return rows.map((r) => `${r.id}:${r.updatedAt.toISOString()}:${r.enabled ? 1 : 0}:${r.priority}`).join('|')
+}
+
+// 测试环境（NODE_ENV=test）显式控制注册表，动态同步关闭——避免测试触 DB / 意外重建被 clearRegistry() 清空的链
+const DYNAMIC_CHAIN_SYNC = process.env.NODE_ENV !== 'test'
+
+let chainSyncState: { sig: string; at: number } | null = null
+const CHAIN_SYNC_TTL_MS = 3_000
+let chainSyncInflight: Promise<void> | null = null
+
+/** 每次路由调用前调用：TTL 内零开销；超时或签名变化时重建链（自定义 → z-ai 兜底） */
+async function ensureChainsFresh(): Promise<void> {
+  if (!DYNAMIC_CHAIN_SYNC) return
+  const now = Date.now()
+  if (chainSyncState && now - chainSyncState.at < CHAIN_SYNC_TTL_MS) return
+  if (chainSyncInflight) return chainSyncInflight
+  chainSyncInflight = (async () => {
+    try {
+      const rows = await readProviderConfigs()
+      const sig = configSignature(rows)
+      if (chainSyncState?.sig === sig) {
+        chainSyncState = { sig, at: now }
+        return
+      }
+      const built = buildChainsFromConfigs(rows)
+      textPlanChain.length = 0
+      textPlanChain.push(...built.text, zaiLlmProvider)
+      imageShotChain.length = 0
+      imageShotChain.push(...built.image, zaiImageProvider)
+      audioTtsChain.length = 0
+      audioTtsChain.push(...built.audio, zaiTtsProvider)
+      videoShotChain.length = 0
+      videoShotChain.push(...built.video, zaiVideoProvider)
+      chainSyncState = { sig, at: now }
+    } finally {
+      chainSyncInflight = null
+    }
+  })()
+  return chainSyncInflight
+}
+
 // ---------- 重试与超时 ----------
 
 const MAX_ATTEMPTS_PER_PROVIDER = 3
 const BASE_BACKOFF_MS = 600
+
+/** 确定性失败（密钥/参数错误）不重试——立即切换下一候选，省去指数退避等待 */
+function isNonRetryable(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return /\b(40[0134])\b|invalid.?api.?key|unauthorized|forbidden|未返回 requestId|不兼容/i.test(msg)
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -171,6 +251,7 @@ async function runWithRetry<P, R>(
         error: message,
         latencyMs,
       })
+      if (isNonRetryable(e)) break // 确定性失败：重试无意义，立即降级到下一候选
       if (attempt < MAX_ATTEMPTS_PER_PROVIDER) {
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1))
       }
@@ -186,6 +267,7 @@ export const router = {
     payload: TextPlanPayload,
     ctx: ProviderCallContext,
   ): Promise<{ result: TextPlanResult; providerId: string; model: string; latencyMs: number }> {
+    await ensureChainsFresh()
     if (textPlanChain.length === 0) throw new ProviderExhaustedError('text.plan', [{ providerId: '(none)', error: '无注册 provider（测试环境？）' }])
     const attempts: Array<{ providerId: string; error: string }> = []
     for (const provider of [...textPlanChain]) {
@@ -203,6 +285,7 @@ export const router = {
     payload: ImageShotPayload,
     ctx: ProviderCallContext,
   ): Promise<{ result: ImageShotResult; providerId: string; model: string }> {
+    await ensureChainsFresh()
     if (imageShotChain.length === 0) throw new ProviderExhaustedError('image.shot', [{ providerId: '(none)', error: '无注册 provider' }])
     const attempts: Array<{ providerId: string; error: string }> = []
     for (const provider of [...imageShotChain]) {
@@ -220,6 +303,7 @@ export const router = {
     payload: AudioTTSPayload,
     ctx: ProviderCallContext,
   ): Promise<{ result: AudioTTSResult; providerId: string; model: string }> {
+    await ensureChainsFresh()
     if (audioTtsChain.length === 0) throw new ProviderExhaustedError('audio.tts', [{ providerId: '(none)', error: '无注册 provider' }])
     const attempts: Array<{ providerId: string; error: string }> = []
     for (const provider of [...audioTtsChain]) {
@@ -237,6 +321,7 @@ export const router = {
     payload: VideoShotPayload,
     ctx: ProviderCallContext,
   ): Promise<{ result: VideoShotResult; providerId: string; model: string }> {
+    await ensureChainsFresh()
     if (videoShotChain.length === 0) throw new ProviderExhaustedError('video.shot', [{ providerId: '(none)', error: '无注册 provider' }])
     const attempts: Array<{ providerId: string; error: string }> = []
     for (const provider of [...videoShotChain]) {

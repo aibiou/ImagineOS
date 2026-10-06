@@ -365,3 +365,27 @@ model ContentInteraction {
   @@unique([userId, contentId, type])
   @@index([contentId, type])
 }
+
+// 自定义模型服务配置（M1.5 Phase B 解锁 / ADR-0004）
+// 目标：不因单一 Provider 配额限制阻塞 ImagineOS（产品负责人 2026-10-06 指令）
+// 每行 = 一条能力通道候选；Model Router 按通道读取启用项（priority 升序）→ 内置 z-ai 兜底。
+// Alpha 明文存密钥（单租户沙箱），API 返回一律打码；正式密钥管理留 Trust 层。
+model ModelProviderConfig {
+  id              String    @id @default(cuid())
+  channel         String // llm | image | tts | video（能力通道）
+  label           String // 显示名（如「DeepSeek 对话」）
+  providerType    String // openai-compat（OpenAI 兼容接口）
+  baseUrl         String // 如 https://api.deepseek.com/v1
+  apiKey          String // 密钥（明文存储；对外打码，掩码提交=不修改）
+  modelName       String // 如 deepseek-chat
+  extraJson       String? // 附加请求参数 JSON（size / voice / response_format 等）
+  enabled         Boolean   @default(true)
+  priority        Int       @default(100) // 数值越小越优先
+  lastTestStatus  String? // ok | fail | untested
+  lastTestMessage String?
+  lastTestedAt    DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@index([channel, enabled, priority])
+}

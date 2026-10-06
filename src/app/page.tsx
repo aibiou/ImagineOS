@@ -7,6 +7,7 @@
 // P1 Remix 文案 →「从这里开始创作」（用户语言规则 user-language-rules.md §4）。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
@@ -291,6 +292,7 @@ export default function Home() {
             <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#imagine">创造</a>
             <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#mine">我的创作</a>
             <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#explore">探索</a>
+            <Link className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="/settings/models">模型服务</Link>
           </nav>
         </div>
       </header>
