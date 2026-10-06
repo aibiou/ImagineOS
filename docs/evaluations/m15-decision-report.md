@@ -1,6 +1,7 @@
 # M1.5 Decision Report — 是否进入 M2 的产品决策输入
 
 > ImagineOS Alpha · 2026-10-07 终版 · M1.5 Expression Quality Gate 收口决策报告（Phase B 补跑后）
+> **本报告已收录于 M1.5 Final Package（`m15-final-package.md` §1，2026-10-07 Final Validation）**
 > 读者：产品负责人。回答 7 个决策问题，全部标注证据等级（A=可复现持久化 / B=持久化不可复现 / C=引用 / ⏸=待补跑）
 > 原则：**没有验证的数据写「未验证」。不为了「看起来完成」而给结论。**
 

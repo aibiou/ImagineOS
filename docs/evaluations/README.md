@@ -2,6 +2,19 @@
 
 > 让模型、Prompt、Orchestrator、Revision 策略的每一次变更都可回归（§59–§60）。
 
+## M1.5 Final Package（2026-10-07，收口交付包）
+
+> **入口文档：`m15-final-package.md`** —— 含 Decision Report 速览、Provider Matrix 终版、Known Limitations（L1–L16）、Demo Case 清单、M2 冻结声明。M2 规划唯一输入 = Gate 7 真人测试数据（`human-test-plan.md` Final Validation 锁定版）。
+
+| 报告 | 状态 |
+|------|------|
+| `m15-final-package.md` | ✅ Final（收口交付包） |
+| `m15-decision-report.md` | ✅ 终版（Q1–Q7 收口） |
+| `m15-expression-quality-report.md` | ✅ 终版（总报告，§0.5 Provider 权威记录） |
+| `m15-visual-quality-report.md` / `m15-revision-report.md` / `m15-remix-report.md` / `m15-content-integrity-report.md` / `m15-cost-report.md` | ✅ 终版 |
+| `human-test-plan.md` | ✅ Final Validation 锁定版（待人工执行） |
+| `m15-human-test-report.md` | 模板就绪（执行后填充） |
+
 ## 评测维度（§59 子集，Alpha 落地）
 
 | 维度 | 测什么 | 方法 |

@@ -304,3 +304,4 @@ Alpha 的成本记账以**调用次数 + 延迟**为代理（provider 未返回�
 | 8 | Human Test Plan | ✅ `human-test-plan.md`；系统侧就绪验证 + 报告模板 ✅ `m15-human-test-report.md` |
 | 9 | M1.5 Decision Report | ✅ `m15-decision-report.md`（Q1–Q7 终版收口） |
 | 10 | 一键恢复编排器 | ✅ `scripts/m15/finish-m15.mjs`（含 native 模式切换与僵死态 regenerate 重入；建议前台分块执行） |
+| 11 | **M1.5 Final Package** | ✅ `m15-final-package.md`（2026-10-07 Final Validation：Decision Report 速览 / Provider Matrix / Known Limitations L1–L16 / Demo Case 清单 / M2 冻结声明——M2 规划唯一输入 = Gate 7 数据） |
