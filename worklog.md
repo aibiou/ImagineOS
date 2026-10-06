@@ -268,3 +268,24 @@ Stage Summary:
 - 「点击自动获取模型名 + 选择 + 测试验证所选模型」完整落地：拉列表（零消耗）→ 分组选择 → 真实调用验证（llm/tts 近零消耗，image 一次生图，video 说明性跳过）
 - Phase B 解锁钥匙已就位：agnes-com 三通道已配置且启用——LLM 通道可立即真实验证（近零消耗）；建议产品负责人在页面点「测试验证」确认（image 会消耗一次生图）
 - 下一步：跑 finish-m15.mjs 补 Phase B（llm/image 走 agnes-com，video 通道 agnes 为 SiliconFlow 风格提交/查询协议是否兼容待首个任务验证，失败自动回退内置）
+
+---
+Task ID: m15-phase-b-integration-001
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令——停止新功能开发，验证 Model Provider 配置链路并恢复 Phase B（p10/G3/G4/Native Golden Case），真实记录全部结果
+
+Work Log:
+- 链路验证（指令§1，A 级证据落盘 chain-verification.json）：页面配置 → DB（ModelProviderConfig 3 行 agnes-com）→ Registry（ensureChainsFresh 动态链）→ Runtime → Generation 记账。真实匿名会话驱动完整创作流：LLM 5/5（openai-compat:agnes-com/agnes-3.0-flash，5.3-30.6s）、Image 12/12（agnes-image-2.5-flash，均值 9.9s）、TTS 36 次全 429 但 fallback 链序验证（无自定义→直达 zai-tts）、image 失败自动降级 zai-image 记账序列在案
+- Agnes 协议逆向（官方 wiki 抓取 wiki.agnes-ai.com）：视频为 OpenAI-Videos 风格（POST /v1/videos mode=keyframe + GET {origin}/agnesapi 轮询），与 SiliconFlow 风格完全不兼容；mode 合法值 text/keyframe/reference（不是 image2video）；Flash 限 size='720P'；当前 $0/秒限时免费；data URI 首帧实测通过（规避生成期内容私有、资产路由 404 的公网可访问约束）
+- 两个协议级缺陷修复（9fe8769）：①S3 预签名 URL 带 Authorization 头必 401（Agnes 图像下载根因）→ downloadMedia 裸下载优先+401/403 带鉴权重试；②视频双协议适配（submit 404 自动转 OpenAI-Videos；queue-full 503 退避重试 ×3；seconds 4-12 夹取；aspect_ratio 最近似映射）→ 新增 4 单测，全套 64/64 绿
+- 通道阻塞矩阵：LLM✅agnes / Image✅agnes / TTS❌（agnes 无 TTS 模型——12 个模型全为文本图像视频 + z-ai 429 长冷却）/ Video🔶（协议就绪但 agnes 队列满 503 持续 ~45min+）
+- Phase B 全部四项依赖 TTS（storyboard Job 的 TTS 步失败即 Job 失败）→ 阻塞收敛为 TTS 单通道
+- 基建：quota-watcher.mjs（孤儿化进程，150s 双探测：z-ai TTS + agnes 视频队列全链试提，恢复即立旗）+ finish-m15.mjs 多 Provider 版（等 TTS→p10/G3/G4→Native Golden→终版度量；TTS 4h 不恢复则诚实退出不烧无效调用）——双进程已验证跨工具调用存活（PPID=1）
+- 文档（dc94005）：主报告 §0.5 Model Provider 矩阵/链路验证/协议缺陷工程记录；成本报告 §5.5 四通道定价（agnes 限时免费 $0，牌价估算 ~$0.75/案例）；§10 阻塞项重写
+- 定价权威数据（官方 wiki）：agnes-3.0-flash input $0.05/M output $0.15/M；agnes-image-2.5-flash $10-24/千张按分辨率；agnes-video-2.5-flash $0.025/秒@720P——当前全部 $0
+
+Stage Summary:
+- 指令§1 链路验证完成：四通道 Provider 真实生效（非 UI 摆设），fallback 机制有记账铁证
+- 指令§4 报告 Provider 信息已入档（主报告 §0.5 + 成本报告 §5.5）
+- Phase B（指令§2）armed 未跑：唯一硬阻塞 = TTS 通道无可用 Provider（外部配额，不可绕过）；编排器后台待命，TTS 恢复自动执行全链
+- 诚实记录（指令§3）：失败原因全部入档——TTS=agnes 无模型+z-ai 429；Video=agnes 服务端队列满 503
