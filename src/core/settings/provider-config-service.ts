@@ -181,6 +181,11 @@ export const providerConfigService = {
       orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
     })) as ProviderConfigRow[]
   },
+
+  /** 按 id 内部读取（含明文密钥；供「拉取模型列表」路由复用已存密钥） */
+  async readById(id: string): Promise<ProviderConfigRow | null> {
+    return (await db.modelProviderConfig.findUnique({ where: { id } })) as ProviderConfigRow | null
+  },
 }
 
 // ---------- 连接测试 ----------
@@ -242,35 +247,247 @@ export async function testOpenAiCompatConnection(row: {
   }
 }
 
-/** 执行连接测试并落库测试结果 */
+// ---------- 模型列表拉取（GET /models，零消耗；供表单「获取模型列表」按钮） ----------
+
+export interface ModelListResult {
+  ok: boolean
+  models: string[]
+  message: string
+  latencyMs: number
+}
+
+/** 拉取该密钥有权限的模型列表（OpenAI 兼容 /models 端点；部分服务不实现则明确提示手填） */
+export async function fetchAvailableModels(row: { baseUrl: string; apiKey: string }): Promise<ModelListResult> {
+  const startedAt = Date.now()
+  const url = joinUrl(row.baseUrl, '/models')
+  try {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), 15_000)
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${row.apiKey}` },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    const latencyMs = Date.now() - startedAt
+    if (!res.ok) {
+      const bodyText = (await res.text()).slice(0, 200)
+      if (res.status === 401 || res.status === 403) {
+        return { ok: false, models: [], message: `密钥无效（HTTP ${res.status}）`, latencyMs }
+      }
+      if (res.status === 404) {
+        return { ok: false, models: [], message: '该服务不提供 /models 列表（404）——请手动填写模型名', latencyMs }
+      }
+      return { ok: false, models: [], message: `HTTP ${res.status}：${bodyText || '无返回内容'}`, latencyMs }
+    }
+    const data = (await res.json().catch(() => null)) as { data?: Array<{ id?: string } | string> } | null
+    const raw = Array.isArray(data?.data) ? (data?.data ?? []) : []
+    const ids = raw
+      .map((m) => (typeof m === 'string' ? m : m?.id))
+      .filter((v): v is string => typeof v === 'string' && v.length > 0)
+    return { ok: true, models: ids, message: `获取到 ${ids.length} 个模型（${latencyMs}ms）`, latencyMs }
+  } catch (e) {
+    const latencyMs = Date.now() - startedAt
+    const msg = e instanceof Error ? e.message : String(e)
+    return { ok: false, models: [], message: `连接失败：${msg.includes('abort') ? '超时（>15s）' : msg}`, latencyMs }
+  }
+}
+
+// ---------- 模型真实验证（按通道最小调用） ----------
+
+export interface ModelVerifyResult {
+  ok: boolean
+  detail: string
+  latencyMs: number
+}
+
+/** 服务内轻量请求（纯 fetch；core 层禁依赖 @/ai，故不复用适配器 helper） */
+async function lightRequest(
+  method: 'GET' | 'POST',
+  url: string,
+  apiKey: string,
+  body?: Record<string, unknown>,
+  timeoutMs = 60_000,
+): Promise<{ ok: boolean; status: number; json: unknown; bytes: Buffer | null; contentType: string; error?: string }> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const res = await fetch(url, {
+      method,
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      ...(body ? { body: JSON.stringify(body) } : {}),
+      signal: controller.signal,
+    })
+    const contentType = res.headers.get('content-type') ?? ''
+    if (!res.ok) {
+      const text = (await res.text()).slice(0, 300)
+      // 尽量解析 JSON 错误体（供 jsonErrorMessage 提取可读信息）
+      let json: unknown = null
+      if (contentType.includes('application/json')) {
+        try { json = JSON.parse(text) } catch { /* 保底用文本 */ }
+      }
+      return { ok: false, status: res.status, json, bytes: null, contentType, error: `HTTP ${res.status}：${text || '无返回内容'}` }
+    }
+    if (contentType.includes('application/json')) {
+      return { ok: true, status: res.status, json: await res.json(), bytes: null, contentType }
+    }
+    return { ok: true, status: res.status, json: null, bytes: Buffer.from(await res.arrayBuffer()), contentType }
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    return { ok: false, status: 0, json: null, bytes: null, contentType: '', error: msg.includes('abort') ? `超时（>${timeoutMs}ms）` : msg }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/** 从 JSON 错误体提取可读信息 */
+function jsonErrorMessage(json: unknown): string | null {
+  if (!json || typeof json !== 'object') return null
+  const j = json as Record<string, unknown>
+  const err = j.error
+  if (err && typeof err === 'object' && 'message' in err) return String((err as { message: unknown }).message)
+  if (typeof err === 'string') return err
+  if (typeof j.message === 'string') return j.message
+  return null
+}
+
+/**
+ * 按通道对所选模型做真实最小调用，验证「这个模型真的能用」：
+ * - llm：真实对话一次（max_tokens 极小，近零消耗）
+ * - tts：真实合成一句（短文本，极小消耗）
+ * - image：真实生成一张测试图（消耗一次生成额度，UI 侧已二次确认）
+ * - video：不做真实生成（成本高）——按 /models 列表存在性给出说明
+ */
+export async function verifyModelForChannel(
+  channel: string,
+  row: { baseUrl: string; apiKey: string; modelName: string; extraJson: string | null },
+  modelsFromList?: string[],
+): Promise<ModelVerifyResult> {
+  const extra = parseExtra(row)
+  const startedAt = Date.now()
+
+  if (channel === 'llm') {
+    const out = await lightRequest(
+      'POST',
+      joinUrl(row.baseUrl, '/chat/completions'),
+      row.apiKey,
+      {
+        model: row.modelName,
+        messages: [{ role: 'user', content: '连接测试' }],
+        max_tokens: 8,
+        stream: false,
+        ...(typeof extra.temperature === 'number' ? { temperature: extra.temperature } : {}),
+      },
+      30_000,
+    )
+    const latencyMs = Date.now() - startedAt
+    if (!out.ok) {
+      if (out.status === 404) return { ok: false, detail: `模型不存在或不可用（404）${jsonErrorMessage(out.json) ? `：${jsonErrorMessage(out.json)}` : ''}`, latencyMs }
+      if (out.status === 401 || out.status === 403) return { ok: false, detail: `密钥无权调用该模型（HTTP ${out.status}）`, latencyMs }
+      return { ok: false, detail: out.error ?? '请求失败', latencyMs }
+    }
+    const content = (out.json as { choices?: Array<{ message?: { content?: unknown } }> } | null)?.choices?.[0]?.message?.content
+    const sample = (typeof content === 'string' ? content : '').trim().slice(0, 30)
+    return { ok: true, detail: `真实对话成功${sample ? `，回复「${sample}」` : ''}（${latencyMs}ms）`, latencyMs }
+  }
+
+  if (channel === 'tts') {
+    const out = await lightRequest(
+      'POST',
+      joinUrl(row.baseUrl, '/audio/speech'),
+      row.apiKey,
+      {
+        model: row.modelName,
+        input: '连接测试',
+        voice: typeof extra.voice === 'string' ? extra.voice : 'alloy',
+        response_format: typeof extra.response_format === 'string' ? extra.response_format : 'wav',
+      },
+      60_000,
+    )
+    const latencyMs = Date.now() - startedAt
+    if (!out.ok) {
+      if (out.status === 404) return { ok: false, detail: `模型不存在或不可用（404）${jsonErrorMessage(out.json) ? `：${jsonErrorMessage(out.json)}` : ''}`, latencyMs }
+      return { ok: false, detail: out.error ?? jsonErrorMessage(out.json) ?? '请求失败', latencyMs }
+    }
+    if (!out.bytes || out.bytes.length < 256) {
+      return { ok: false, detail: `返回音频异常（${out.bytes?.length ?? 0} 字节）`, latencyMs }
+    }
+    return { ok: true, detail: `真实合成成功（${out.bytes.length} 字节音频，${latencyMs}ms）`, latencyMs }
+  }
+
+  if (channel === 'image') {
+    const out = await lightRequest(
+      'POST',
+      joinUrl(row.baseUrl, '/images/generations'),
+      row.apiKey,
+      {
+        model: row.modelName,
+        prompt: '连接测试',
+        ...(typeof extra.size === 'string' ? { size: extra.size } : {}),
+      },
+      120_000,
+    )
+    const latencyMs = Date.now() - startedAt
+    if (!out.ok) {
+      if (out.status === 404) return { ok: false, detail: `模型不存在或不可用（404）${jsonErrorMessage(out.json) ? `：${jsonErrorMessage(out.json)}` : ''}`, latencyMs }
+      if (out.status === 401 || out.status === 403) return { ok: false, detail: `密钥无权调用该模型（HTTP ${out.status}）`, latencyMs }
+      return { ok: false, detail: out.error ?? jsonErrorMessage(out.json) ?? '请求失败', latencyMs }
+    }
+    type ImageEntry = { b64_json?: string; base64?: string; url?: string }
+    const json = out.json as { data?: ImageEntry[]; images?: ImageEntry[] } | null
+    const entry = json?.data?.[0] ?? json?.images?.[0]
+    const hasB64 = typeof (entry?.b64_json ?? entry?.base64) === 'string'
+    const hasUrl = typeof entry?.url === 'string'
+    if (!hasB64 && !hasUrl) {
+      return { ok: false, detail: '请求成功但返回中无图像数据（该模型可能不支持生图）', latencyMs }
+    }
+    return { ok: true, detail: `真实生成成功（已消耗一次测试生图，${latencyMs}ms）`, latencyMs }
+  }
+
+  // video：真实生成成本高且慢（分钟级），不做实调——按列表存在性说明
+  if (Array.isArray(modelsFromList) && modelsFromList.length > 0) {
+    if (modelsFromList.includes(row.modelName)) {
+      return { ok: true, detail: '模型在服务列表中；视频生成成本高跳过实调，真实可用性以首个创作任务为准', latencyMs: Date.now() - startedAt }
+    }
+    return { ok: true, detail: `连接可用；模型列表（${modelsFromList.length} 个）中未见该模型，请确认名称——视频生成成本高跳过实调`, latencyMs: Date.now() - startedAt }
+  }
+  return { ok: true, detail: '该服务未返回模型列表；视频生成成本高跳过实调，真实可用性以首个创作任务为准', latencyMs: Date.now() - startedAt }
+}
+
+/** 执行连接测试 + 模型真实验证并落库测试结果 */
 export async function runConnectionTest(id: string): Promise<
-  { ok: true; result: ConnectionTestResult } | { ok: false; error: string; status: number }
+  { ok: true; result: ConnectionTestResult & { modelVerified: boolean; modelsCount: number } } | { ok: false; error: string; status: number }
 > {
   const row = await db.modelProviderConfig.findUnique({ where: { id } })
   if (!row) return { ok: false, error: '配置不存在', status: 404 }
 
-  let result: ConnectionTestResult
-  switch (row.providerType) {
-    case 'openai-compat':
-      result = await testOpenAiCompatConnection({
-        baseUrl: row.baseUrl,
-        apiKey: row.apiKey,
-        modelName: row.modelName,
-      })
-      break
-    default:
-      return { ok: false, error: `暂不支持的服务商类型：${row.providerType}`, status: 422 }
+  let ok: boolean
+  let message: string
+  let modelVerified = false
+  let modelsCount = 0
+
+  const list = await fetchAvailableModels({ baseUrl: row.baseUrl, apiKey: row.apiKey })
+  if (!list.ok) {
+    ok = false
+    message = `连接失败：${list.message}`
+  } else {
+    modelsCount = list.models.length
+    const verify = await verifyModelForChannel(row.channel, row, list.models)
+    ok = verify.ok
+    modelVerified = verify.ok
+    const listNote = list.models.length > 0 ? `（服务返回 ${list.models.length} 个模型）` : ''
+    message = `连接成功${listNote}｜模型「${row.modelName}」${verify.ok ? '验证通过' : '验证失败'}：${verify.detail}`
   }
 
   await db.modelProviderConfig.update({
     where: { id },
     data: {
-      lastTestStatus: result.ok ? 'ok' : 'fail',
-      lastTestMessage: result.message.slice(0, 500),
+      lastTestStatus: ok ? 'ok' : 'fail',
+      lastTestMessage: message.slice(0, 500),
       lastTestedAt: new Date(),
     },
   })
-  return { ok: true, result }
+  return { ok: true, result: { ok, message, latencyMs: list.latencyMs, modelVerified, modelsCount } }
 }
 
 // ---------- 附加参数解析 ----------

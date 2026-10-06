@@ -10,7 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import {
-  ArrowLeft, Check, Loader2, Pencil, Plug, PlugZap, Plus, Settings2, ShieldCheck, Trash2,
+  ArrowLeft, Check, ChevronDown, ListChecks, Loader2, Pencil, Plug, PlugZap, Plus, Settings2, ShieldCheck, Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,6 +18,7 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { sortModelsForChannel } from '@/lib/model-catalog'
 
 // ---------- 常量 ----------
 
@@ -136,6 +137,10 @@ const EMPTY_FORM: FormState = { label: '', baseUrl: '', apiKey: '', modelName: '
 // 高对比输入框（暗色实底 + 清晰边框；! 确保覆盖组件默认令牌）
 const INPUT_CLS = 'border-white/25! bg-black/40! text-zinc-100!'
 
+// 高对比原生 select（与输入框同风格）
+const SELECT_CLS =
+  'h-9 w-full rounded-md border border-white/25 bg-black/40 px-3 text-sm text-zinc-100 outline-none focus-visible:border-violet-400/60 [&>option]:bg-zinc-900 [&>option]:text-zinc-100'
+
 function ProviderForm({
   mode,
   channelKey,
@@ -166,6 +171,52 @@ function ProviderForm({
   )
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  // 模型列表拉取（一键获取该密钥可用模型，免去手敲）
+  const [modelList, setModelList] = useState<string[] | null>(null)
+  const [fetchingModels, setFetchingModels] = useState(false)
+  const [fetchMsg, setFetchMsg] = useState<string | null>(null)
+
+  const grouped = useMemo(
+    () => (modelList ? sortModelsForChannel(channelKey, modelList) : { recommended: [], others: [] }),
+    [modelList, channelKey],
+  )
+
+  /** 新增模式：密钥已在表单；编辑模式未改密钥：复用已存密钥（configId） */
+  const canFetchModels = form.baseUrl.trim().length > 0 && (editing || form.apiKey.trim().length > 0)
+
+  const fetchModels = async () => {
+    setFetchingModels(true)
+    setFetchMsg(null)
+    try {
+      const payload: Record<string, unknown> =
+        editing && !form.apiKey.trim()
+          ? { configId: initial?.id }
+          : { baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() }
+      const res = await fetch('/api/settings/model-providers/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setModelList(null)
+        setFetchMsg(`✗ ${data.error ?? '获取失败'}`)
+        return
+      }
+      const models: string[] = Array.isArray(data.models) ? data.models : []
+      setModelList(models)
+      const g = sortModelsForChannel(channelKey, models)
+      setFetchMsg(
+        models.length === 0
+          ? '✓ 连接成功，但该服务未返回任何模型——请手动填写模型名'
+          : `✓ 获取到 ${models.length} 个模型（推荐 ${g.recommended.length} 个），可在下方列表选择`,
+      )
+    } catch (e) {
+      setFetchMsg(`✗ ${e instanceof Error ? e.message : '获取失败'}`)
+    } finally {
+      setFetchingModels(false)
+    }
+  }
 
   const applyPreset = (p: { label: string; baseUrl: string; modelName: string }) => {
     setForm((f) => ({ ...f, baseUrl: p.baseUrl, modelName: p.modelName, label: editing ? f.label : (f.label || p.label) }))
@@ -227,8 +278,50 @@ function ProviderForm({
           <Input id={`label-${mode}-${channelKey}`} className={INPUT_CLS} value={form.label} placeholder="如：DeepSeek 对话" onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor={`model-${mode}-${channelKey}`}>模型名称（Model Name）</Label>
-          <Input id={`model-${mode}-${channelKey}`} className={INPUT_CLS} value={form.modelName} placeholder="如 deepseek-chat" onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))} />
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`model-${mode}-${channelKey}`}>模型名称（Model Name）</Label>
+            <button
+              type="button"
+              onClick={fetchModels}
+              disabled={fetchingModels || !canFetchModels}
+              title={canFetchModels ? '用当前地址与密钥拉取可用模型列表（零消耗）' : '请先填写接口地址与密钥'}
+              className="flex items-center gap-1 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-1 text-[11px] text-violet-300 transition hover:border-violet-400/60 hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {fetchingModels ? <Loader2 className="size-3 animate-spin" /> : <ListChecks className="size-3" aria-hidden />}
+              获取模型列表
+            </button>
+          </div>
+          <Input id={`model-${mode}-${channelKey}`} className={INPUT_CLS} value={form.modelName} placeholder="如 deepseek-chat（或点右上按钮自动获取）" onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))} />
+          {modelList && modelList.length > 0 ? (
+            <div className="relative">
+              <select
+                value={form.modelName && modelList.includes(form.modelName) ? form.modelName : ''}
+                onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))}
+                className={`${SELECT_CLS} appearance-none pr-8`}
+                aria-label="从可用模型列表中选择"
+              >
+                <option value="">从 {modelList.length} 个可用模型中选择…</option>
+                {grouped.recommended.length > 0 ? (
+                  <optgroup label={`推荐（匹配${channelKey === 'llm' ? '对话' : channelKey === 'image' ? '生图' : channelKey === 'tts' ? '配音' : '视频'}能力）`}>
+                    {grouped.recommended.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </optgroup>
+                ) : null}
+                {grouped.others.length > 0 ? (
+                  <optgroup label="其他可用模型">
+                    {grouped.others.map((m) => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                  </optgroup>
+                ) : null}
+              </select>
+              <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+            </div>
+          ) : null}
+          {fetchMsg ? (
+            <p className={`text-[11px] ${fetchMsg.startsWith('✓') ? 'text-emerald-300/90' : 'text-red-300/90'}`}>{fetchMsg}</p>
+          ) : null}
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor={`base-${mode}-${channelKey}`}>接口地址（Endpoint）</Label>
@@ -319,9 +412,9 @@ function ConfigCard({
             <Pencil className="size-4" />
             编辑
           </Button>
-          <Button variant="ghost" size="sm" onClick={() => onTest(row)} disabled={testing}>
+          <Button variant="ghost" size="sm" onClick={() => onTest(row)} disabled={testing} title="验证连接 + 真实调用所选模型（对话/配音/生图各一次最小调用；视频通道跳过实调）">
             {testing ? <Loader2 className="size-4 animate-spin" /> : <PlugZap className="size-4" />}
-            连接测试
+            测试验证
           </Button>
           <Button variant="ghost" size="sm" className="text-red-400 hover:text-red-300" onClick={() => onDelete(row)}>
             <Trash2 className="size-4" />
@@ -413,6 +506,10 @@ export default function ModelSettingsPage() {
   }
 
   const test = async (row: ConfigRow) => {
+    if (row.channel === 'image') {
+      const go = window.confirm('图像模型验证会真实生成 1 张测试图（消耗少量额度），继续？')
+      if (!go) return
+    }
     setTestingId(row.id)
     try {
       const res = await fetch(`/api/settings/model-providers/${row.id}/test`, { method: 'POST' })
@@ -460,15 +557,15 @@ export default function ModelSettingsPage() {
           <div className="mt-4 grid gap-2 text-xs text-zinc-300 sm:grid-cols-3">
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">1</span>
-              <span>点「添加自定义服务」，选服务商一键填充地址与模型名</span>
+              <span>选服务商预填地址 → 粘贴 API Key → 点「获取模型列表」从可用模型中选择</span>
             </div>
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">2</span>
-              <span>粘贴你的 API Key，保存即加入候选链</span>
+              <span>保存后点「测试验证」——真实调用一次所选模型，确认它真的能用</span>
             </div>
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">3</span>
-              <span>点「连接测试」确认可用，然后正常去创作</span>
+              <span>验证通过即加入候选链，正常去创作；失败自动切换下一家</span>
             </div>
           </div>
           <p className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-400">
