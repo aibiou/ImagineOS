@@ -53,8 +53,13 @@ export const contentService = {
     return { content, isOwner }
   },
 
-  /** 状态机推进（唯一合法入口：先断言跳转再落库） */
-  async advanceStatus(contentId: string, to: string, actorId: string): Promise<Content> {
+  /** 状态机推进（唯一合法入口：先断言跳转再落库）。actorType: human(用户操作) | system(Job/管线自动推进) */
+  async advanceStatus(
+    contentId: string,
+    to: string,
+    actorId: string,
+    opts?: { actorType?: 'human' | 'system'; note?: string },
+  ): Promise<Content> {
     if (!isCreativeStatus(to)) {
       throw new DomainValidationError(`未知状态：${to}（合法值见 CREATIVE_STATUSES）`)
     }
@@ -70,9 +75,9 @@ export const contentService = {
       await provenanceRepo.append(tx, {
         contentId,
         eventType: 'status_changed',
-        actorType: 'human',
+        actorType: opts?.actorType ?? 'human',
         actorId,
-        payload: { from, to },
+        payload: { from, to, ...(opts?.note ? { note: opts.note } : {}) },
       })
       return updated
     })
@@ -133,6 +138,11 @@ export const contentService = {
       })
       return updated
     })
+  },
+
+  /** Remix 血缘查询（衍生作品 → 源作品） */
+  async getRemixLineage(contentId: string) {
+    return remixRepo.findByDerivative(db, contentId)
   },
 
   listMyContents(ownerId: string) {

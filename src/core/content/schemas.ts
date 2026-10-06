@@ -49,7 +49,9 @@ export type IntentRecord = z.infer<typeof IntentRecordSchema>
 export const ShotSnapshotSchema = z.object({
   index: z.number().int().min(0),
   visualDescription: z.string().optional(),
-  cameraMotion: z.string().optional(), // 推/拉/摇/移/跟/固定
+  /** 面向图像生成的英文提示词（执行配方的一部分，随版本密封） */
+  imagePrompt: z.string().optional(),
+  cameraMotion: z.string().optional(), // zoom_in | zoom_out | pan_left | pan_right | static
   durationMs: z.number().int().positive().optional(),
   narrationLine: z.string().optional(),
   emotion: z.string().optional(),

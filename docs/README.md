@@ -6,11 +6,12 @@
 ## 阅读顺序（新成员 / 新 Agent 必读）
 
 1. `docs/product/product-north-star.md` — 项目宪法：使命、北极星、禁改清单
-2. `docs/architecture/architecture-understanding-report.md` — 架构理解报告（Phase 1 交付物）
-3. `docs/product/development-task-tree.md` — 开发任务树（Phase 2 交付物，当前工作蓝本）
-4. `docs/decisions/` — 决策日志（ADR），按编号倒序读最新
-5. `docs/evaluations/` — 评测体系与 Golden Dataset
-6. `docs/ideas/` — 想法登记簿
+2. `docs/product/m0-review-m1-direction.md` — **产品负责人 M0 评审结论与 M1 方向（2026-10-06）**
+3. `docs/architecture/architecture-understanding-report.md` — 架构理解报告（Phase 1 交付物）
+4. `docs/product/development-task-tree.md` — 开发任务树（Phase 2 交付物，当前工作蓝本）
+5. `docs/decisions/` — 决策日志（ADR），按编号倒序读最新
+6. `docs/evaluations/` — 评测体系与 Golden Dataset
+7. `docs/ideas/` — 想法登记簿
 
 ## 目录职责
 
@@ -30,5 +31,5 @@
 
 ## 当前阶段
 
-**Phase 0–2 已完成**（Repository Discovery → 架构理解报告 → 开发任务树）。
-下一步：Phase 3 Repository Foundation（见任务树 Epic E0）。
+**M0 Walking Skeleton 已完成并经产品负责人评审通过**（2026-10-06：方向正确，不推翻，M1 增量增强）。
+当前：**M1 First Video**（E3 Intent Engine → E4 Planner → E5 Router/Providers → E6 Gen Jobs → E7 Media Pipeline → E7X Platform Surface），见任务树。

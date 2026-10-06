@@ -24,7 +24,8 @@ export async function POST(req: Request) {
         contentId: content.id,
         title: content.title,
         status: content.status,
-        message: '表达已收到。Intent Engine 将在下个里程碑接管，把它编译成创作计划。',
+        createUrl: `/create/${content.id}`,
+        message: '表达已收到。去创作空间，把它变成作品。',
       },
       { status: 201 },
     )

@@ -1,17 +1,19 @@
 'use client'
 
-// ImagineOS Alpha · M0 Walking Skeleton 首页
-// 哲学入口（§42）：不是"你想看什么"，而是"你想表达什么？"
-// 本页承载 M0 可交互演示：表达 → 状态机推进 → 版本(修订/恢复) → 发布 → Remix
+// ImagineOS 首页（M1 · 评审后增量版）
+// 保持 M0 信息架构（评审 P1：Home→主创作入口→我的创作→探索，不重构）；
+// P0-1 Explore 视觉化：视觉内容是卡片第一元素；P0-2 「你想表达什么？」保持核心入口；
+// P0-3 全部文案走产品语言字典（src/app/_language）；
+// P1 Remix 文案 →「从这里开始我的版本」。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import {
   ArrowRight,
   BadgeCheck,
   BookOpenText,
   Clapperboard,
-  Copy,
   GitBranch,
   Heart,
   History,
@@ -19,27 +21,21 @@ import {
   MessageCircleQuestion,
   PenLine,
   Play,
-  Plus,
   Rocket,
   Sparkles,
   Wand2,
+  X,
 } from 'lucide-react'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardFooter, CardHeader } from '@/components/ui/card'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
+import { COPY, STAGE_LABEL, durationLabel, versionLabel, versionWithCount, METHOD_LABEL } from '@/app/_language'
 
 // ---------- API 类型 ----------
 
@@ -51,6 +47,9 @@ interface ContentListItem {
   remixPermission: string
   createdAt: string
   updatedAt: string
+  posterUrl: string | null
+  videoUrl: string | null
+  durationMs: number | null
   currentVersion: { id: string; versionNumber: number; changelog: string | null; createdAt: string } | null
   _count: { versions: number; remixSources: number }
 }
@@ -71,33 +70,12 @@ interface VersionItem {
   isCurrent: boolean
 }
 
-// ---------- 状态机 UI 配置 ----------
-
-const STATUS_LABEL: Record<string, string> = {
-  IDEA: '想法',
-  INTENT: '理解意图',
-  PLANNING: '创意方向',
-  STORY: '故事',
-  STORYBOARD: '分镜',
-  GENERATING: 'AI 生成中',
-  REVIEW: '预览',
-  RENDERING: '渲染成片',
-  READY: '就绪',
-  PUBLISHED: '已发布',
-}
-
-const NEXT_STEP: Record<string, { label?: string; to?: string; action?: 'publish' }> = {
-  IDEA: { label: '理解我的意图', to: 'INTENT' },
-  INTENT: { label: '给我几个创作方向', to: 'PLANNING' },
-  PLANNING: { label: '撰写故事', to: 'STORY' },
-  STORY: { label: '拆分镜头', to: 'STORYBOARD' },
-  STORYBOARD: { label: '开始 AI 生成', to: 'GENERATING' },
-  GENERATING: { label: '预览生成结果', to: 'REVIEW' },
-  REVIEW: { label: '满意，渲染成片', to: 'RENDERING' },
-  RENDERING: { label: '完成', to: 'READY' },
-  READY: { label: '发布作品', action: 'publish' },
-  PUBLISHED: {},
-}
+const SUGGESTIONS = [
+  '我想做一个 45 秒的视频，记录我小时候和父亲一起骑自行车。',
+  '把我昨晚的梦拍成一支水彩风格的短片。',
+  '给小朋友解释：为什么天空是蓝色的？',
+  '为我家乡的小吃街拍一部微纪录片。',
+]
 
 function statusBadgeClass(status: string): string {
   switch (status) {
@@ -118,24 +96,10 @@ function statusBadgeClass(status: string): string {
   }
 }
 
-const METHOD_LABEL: Record<string, string> = {
-  initial: '初版',
-  revision: '修订',
-  restore: '恢复',
-  remix: 'Remix',
-  regenerate: '重生成',
-}
-
-const SUGGESTIONS = [
-  '我想做一个 45 秒的视频，记录我小时候和父亲一起骑自行车。',
-  '把我昨晚的梦拍成一支水彩风格的短片。',
-  '给小朋友解释：为什么天空是蓝色的？',
-  '为我家乡的小吃街拍一部微纪录片。',
-]
-
 // ---------- 页面 ----------
 
 export default function Home() {
+  const router = useRouter()
   const { toast } = useToast()
   const [expression, setExpression] = useState('')
   const [starting, setStarting] = useState(false)
@@ -144,7 +108,7 @@ export default function Home() {
   const [loadingLists, setLoadingLists] = useState(true)
   const [anonymous, setAnonymous] = useState(true)
 
-  // 修订对话框
+  // 修订对话框（早期阶段的快速版本；成片后的智能修改在创作空间）
   const [revisionFor, setRevisionFor] = useState<ContentListItem | null>(null)
   const [revisionText, setRevisionText] = useState('')
   const [revisionBusy, setRevisionBusy] = useState(false)
@@ -153,6 +117,9 @@ export default function Home() {
   const [timelineFor, setTimelineFor] = useState<ContentListItem | null>(null)
   const [timeline, setTimeline] = useState<VersionItem[] | null>(null)
   const [timelineBusy, setTimelineBusy] = useState<string | null>(null)
+
+  // 探索作品播放对话框（视觉内容第一：点开即看）
+  const [playingItem, setPlayingItem] = useState<ExploreItem | null>(null)
 
   const [busyContentId, setBusyContentId] = useState<string | null>(null)
 
@@ -193,16 +160,17 @@ export default function Home() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: trimmed }),
         })
-        const json = (await res.json()) as { title?: string; message?: string; message2?: string; error?: string }
+        const json = (await res.json()) as { contentId?: string; createUrl?: string; message?: string; error?: string }
         if (!res.ok) {
           toast({ title: '未能开始', description: (json as { message?: string }).message ?? '请稍后再试', variant: 'destructive' })
           return
         }
         setExpression('')
-        toast({
-          title: '表达已收到 ✦',
-          description: `《${json.title}》已创建。Alpha 当前提供创作流程骨架，AI 编译将在下个里程碑接管。`,
-        })
+        // 直达创作空间：想 → 创 的第一步
+        if (json.createUrl) {
+          router.push(json.createUrl)
+          return
+        }
         await loadLists()
       } catch {
         toast({ title: '网络错误', description: '请稍后再试。', variant: 'destructive' })
@@ -210,7 +178,7 @@ export default function Home() {
         setStarting(false)
       }
     },
-    [loadLists, toast],
+    [loadLists, router, toast],
   )
 
   const mutateContent = useCallback(
@@ -228,7 +196,7 @@ export default function Home() {
           return false
         }
         if (successTitle) {
-          toast({ title: successTitle, description: json.message ?? (json.versionNumber ? `现在是 v${json.versionNumber}` : undefined) })
+          toast({ title: successTitle, description: json.message ?? (json.versionNumber ? `现在是${versionLabel(json.versionNumber)}` : undefined) })
         }
         await loadLists()
         return true
@@ -264,7 +232,7 @@ export default function Home() {
           toast({ title: '恢复失败', description: json.message ?? '请稍后再试', variant: 'destructive' })
           return
         }
-        toast({ title: `已恢复为新版本 v${json.versionNumber}`, description: '旧版本仍在时间线上，随时可再回去。' })
+        toast({ title: `已回到「${versionLabel(json.versionNumber ?? 1)}」`, description: '旧版本仍在时间线上，随时可再回去。' })
         await openTimeline(timelineFor ?? ({ id: contentId } as ContentListItem))
         await loadLists()
       } finally {
@@ -278,16 +246,11 @@ export default function Home() {
     if (!revisionFor) return
     const text = revisionText.trim()
     if (!text) {
-      toast({ title: '想怎么改？', description: '用一句话描述，比如"再温暖一点"。' })
+      toast({ title: COPY.revisionTitle, description: '用一句话描述，比如「再温暖一点」。' })
       return
     }
     setRevisionBusy(true)
-    const ok = await mutateContent(
-      revisionFor.id,
-      '/versions',
-      { method: 'revision', changelog: text },
-      '新版本已创建',
-    )
+    const ok = await mutateContent(revisionFor.id, '/versions', { method: 'revision', changelog: text }, '新一版已开始')
     setRevisionBusy(false)
     if (ok) {
       setRevisionFor(null)
@@ -297,23 +260,15 @@ export default function Home() {
 
   const remix = useCallback(
     async (item: { id: string; title: string }) => {
-      const ok = await mutateContent(item.id, '/remix', undefined, 'Remix 已创建')
-      if (ok) toast({ title: `${item.title} · Remix`, description: '副本已进入你的创作循环，去"我的创作"继续。' })
+      const ok = await mutateContent(item.id, '/remix', undefined, COPY.remixDone)
+      if (ok) {
+        toast({
+          title: `${item.title} · 你的版本`,
+          description: '配方已到你手上——去「我的创作」继续创作，画面会为你重新生成。',
+        })
+      }
     },
     [mutateContent, toast],
-  )
-
-  const onNextStep = useCallback(
-    async (item: ContentListItem) => {
-      const step = NEXT_STEP[item.status]
-      if (!step || !step.label) return
-      if (step.action === 'publish') {
-        await mutateContent(item.id, '/publish', { visibility: 'public' }, '作品已发布 ✦')
-        return
-      }
-      await mutateContent(item.id, '/status', { to: step.to }, `进入「${STATUS_LABEL[step.to ?? ''] ?? step.to}」`)
-    },
-    [mutateContent],
   )
 
   const exploreCards = useMemo(() => explore.slice(0, 9), [explore])
@@ -341,7 +296,7 @@ export default function Home() {
       </header>
 
       <main className="flex-1">
-        {/* 英雄区：第一性问题 */}
+        {/* 英雄区：第一性问题（评审 P0-2：保持原样） */}
         <section id="imagine" className="relative overflow-hidden px-4 pb-16 pt-14 sm:px-6 sm:pt-20">
           <div aria-hidden className="pointer-events-none absolute inset-0">
             <div className="absolute left-1/2 top-[-20%] h-[420px] w-[720px] -translate-x-1/2 rounded-full bg-violet-600/20 blur-[120px]" />
@@ -351,7 +306,7 @@ export default function Home() {
 
           <div className="relative mx-auto max-w-3xl text-center">
             <Badge variant="outline" className="mb-6 gap-1.5 border-fuchsia-500/30 bg-fuchsia-500/10 text-fuchsia-300">
-              <Wand2 className="size-3" aria-hidden /> AI 原生创作循环 · Alpha M0
+              <Wand2 className="size-3" aria-hidden /> AI 原生创作循环 · Alpha
             </Badge>
             <h1 className="text-balance text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
               你想<span className="bg-gradient-to-r from-violet-400 via-fuchsia-400 to-amber-300 bg-clip-text text-transparent">表达</span>
@@ -417,12 +372,12 @@ export default function Home() {
           </div>
         </section>
 
-        {/* 我的创作 */}
+        {/* 我的创作（评审 P1：保持区块，卡片接入创作空间） */}
         <section id="mine" className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 pb-14 sm:px-6">
           <SectionHeader
             icon={<PenLine className="size-4" aria-hidden />}
             title="我的创作"
-            desc={anonymous ? '开始一次表达，就会出现在这里。' : '每一个想法都是一个可继续创造的作品。'}
+            desc={anonymous ? '开始一次表达，就会出现在这里。' : '每一个想法都是一个可以继续生长的作品。'}
             right={
               mine.length > 0 ? (
                 <Badge variant="secondary" className="bg-zinc-800 text-zinc-300">{mine.length} 个作品</Badge>
@@ -437,7 +392,7 @@ export default function Home() {
             <EmptyState
               icon={<MessageCircleQuestion className="size-8 text-zinc-500" aria-hidden />}
               title={anonymous ? '还没有开始第一次表达' : '这里还空着'}
-              desc={anonymous ? '在上面写下你想表达的东西——一个念头就够了。' : '从一句"我想表达…"开始。'}
+              desc={anonymous ? '在上面写下你想表达的东西——一个念头就够了。' : '从一句「我想表达…」开始。'}
             />
           ) : (
             <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -446,7 +401,6 @@ export default function Home() {
                   key={item.id}
                   item={item}
                   busy={busyContentId === item.id}
-                  onNext={() => void onNextStep(item)}
                   onRevise={() => setRevisionFor(item)}
                   onTimeline={() => void openTimeline(item)}
                 />
@@ -457,17 +411,17 @@ export default function Home() {
 
         <Separator className="bg-white/5" />
 
-        {/* 探索 */}
+        {/* 探索（评审 P0-1：视觉内容是卡片第一元素） */}
         <section id="explore" className="mx-auto w-full max-w-6xl scroll-mt-20 px-4 py-14 sm:px-6">
           <SectionHeader
             icon={<Clapperboard className="size-4" aria-hidden />}
             title="探索"
-            desc="别人正在表达什么。每一件都可以成为你创作的起点。"
+            desc="别人正在表达什么。每一件，都可以成为你创作的起点。"
             right={<Badge variant="secondary" className="bg-zinc-800 text-zinc-300">{explore.length} 件公开作品</Badge>}
           />
           {loadingLists ? (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {[0, 1, 2].map((i) => <SkeletonCard key={i} />)}
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+              {[0, 1, 2].map((i) => <SkeletonExploreCard key={i} />)}
             </div>
           ) : exploreCards.length === 0 ? (
             <EmptyState
@@ -476,36 +430,42 @@ export default function Home() {
               desc="发布第一件作品，点亮这里。"
             />
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {exploreCards.map((item) => (
-                <ExploreCard key={item.id} item={item} onRemix={() => void remix({ id: item.id, title: item.title })} />
+                <ExploreCard
+                  key={item.id}
+                  item={item}
+                  busy={busyContentId === item.id}
+                  onPlay={() => setPlayingItem(item)}
+                  onRemix={() => void remix({ id: item.id, title: item.title })}
+                />
               ))}
             </div>
           )}
         </section>
       </main>
 
-      {/* 页脚（sticky） */}
+      {/* 页脚（评审 P0-3：用户语言） */}
       <footer className="mt-auto border-t border-white/5 bg-zinc-950/90">
         <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 px-4 py-6 text-xs text-zinc-500 sm:flex-row sm:px-6">
           <div className="flex items-center gap-2">
             <Sparkles className="size-3.5 text-fuchsia-400/70" aria-hidden />
-            <span>ImagineOS Alpha · M0 Walking Skeleton</span>
+            <span>ImagineOS Alpha</span>
           </div>
-          <div>Content Object · 版本 · Remix 血缘 已就绪 — Intent Engine / AI 生成管线将于 M1 接入</div>
+          <div>每一件作品都带着它的完整来路 · 任何人都能从这里开始自己的版本</div>
         </div>
       </footer>
 
-      {/* 修订对话框 */}
+      {/* 修订对话框（早期快速版本） */}
       <Dialog open={revisionFor !== null} onOpenChange={(open) => !open && setRevisionFor(null)}>
         <DialogContent className="border-white/10 bg-zinc-900 sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <PenLine className="size-4 text-fuchsia-400" aria-hidden />
-              你想怎么改？
+              {COPY.revisionTitle}
             </DialogTitle>
             <DialogDescription>
-              用一句话描述修改方向（如「再温暖一点」「结尾别这么悲伤」）。系统会创建新版本——旧版本永远保留。
+              用一句话描述修改方向（如「再温暖一点」「结尾别这么悲伤」）。会创建新的一版——旧版本永远保留。
             </DialogDescription>
           </DialogHeader>
           <Textarea
@@ -523,22 +483,22 @@ export default function Home() {
               className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90"
             >
               {revisionBusy && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              创建新版本
+              开始新的一版
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      {/* 版本时间线对话框 */}
+      {/* 版本时间线对话框（用户语言） */}
       <Dialog open={timelineFor !== null} onOpenChange={(open) => !open && setTimelineFor(null)}>
         <DialogContent className="border-white/10 bg-zinc-900 sm:max-w-xl">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <History className="size-4 text-amber-300" aria-hidden />
-              版本时间线
+              这个作品的来路
               {timelineFor && <span className="truncate text-sm font-normal text-zinc-400">《{timelineFor.title}》</span>}
             </DialogTitle>
-            <DialogDescription>每个版本都可查看、恢复。恢复会创建新版本，而不是覆盖历史。</DialogDescription>
+            <DialogDescription>每一版都还在。回到任何一版，会创建新的一版，而不是抹掉历史。</DialogDescription>
           </DialogHeader>
           <ScrollArea className="max-h-96 pr-3">
             {timeline === null ? (
@@ -557,13 +517,13 @@ export default function Home() {
                     />
                     <div className="rounded-xl border border-white/10 bg-zinc-950/60 p-3">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-mono text-sm text-zinc-200">v{v.versionNumber}</span>
+                        <span className="text-sm text-zinc-200">{versionLabel(v.versionNumber)}</span>
                         <Badge variant="outline" className="border-white/10 bg-white/5 text-[11px] text-zinc-300">
                           {METHOD_LABEL[v.creationMethod] ?? v.creationMethod}
                         </Badge>
                         {v.isCurrent && (
                           <Badge variant="outline" className="border-emerald-500/40 bg-emerald-500/10 text-[11px] text-emerald-300">
-                            当前
+                            {COPY.latestVersion}
                           </Badge>
                         )}
                       </div>
@@ -579,7 +539,7 @@ export default function Home() {
                             className="h-8 gap-1.5 border-white/15 bg-transparent text-xs text-zinc-300 hover:border-amber-400/40 hover:text-amber-300"
                           >
                             {timelineBusy === v.id ? <Loader2 className="size-3 animate-spin" aria-hidden /> : <History className="size-3" aria-hidden />}
-                            恢复此版
+                            回到这一版
                           </Button>
                         )}
                       </div>
@@ -592,6 +552,66 @@ export default function Home() {
         </DialogContent>
       </Dialog>
 
+      {/* 作品播放对话框（视频平台感的核心交互） */}
+      {playingItem && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-sm" role="dialog" aria-modal="true" aria-label={`播放 ${playingItem.title}`}>
+          <div className="relative w-full max-w-md">
+            <button
+              onClick={() => setPlayingItem(null)}
+              className="absolute -top-11 right-0 z-10 flex items-center gap-1.5 rounded-lg border border-white/10 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 transition hover:text-white"
+              aria-label="关闭"
+            >
+              <X className="size-3.5" aria-hidden /> 关闭
+            </button>
+            <div className="overflow-hidden rounded-2xl border border-white/10 bg-zinc-900">
+              {playingItem.videoUrl ? (
+                <video
+                  key={playingItem.id}
+                  controls
+                  autoPlay
+                  playsInline
+                  poster={playingItem.posterUrl ?? undefined}
+                  src={playingItem.videoUrl}
+                  className="aspect-[9/16] max-h-[70vh] w-full bg-black object-contain"
+                />
+              ) : (
+                <div className="flex aspect-[9/16] max-h-[70vh] items-center justify-center bg-zinc-950">
+                  <Loader2 className="size-8 animate-spin text-zinc-600" aria-hidden />
+                </div>
+              )}
+              <div className="space-y-4 p-5">
+                <div>
+                  <h3 className="text-lg font-semibold leading-snug text-zinc-100">{playingItem.title}</h3>
+                  {durationLabel(playingItem.durationMs) && (
+                    <span className="text-xs text-zinc-500">{durationLabel(playingItem.durationMs)}</span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <div className="flex items-center gap-2 text-zinc-300">
+                    <div className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 text-xs">
+                      {playingItem.owner.displayName.slice(0, 1)}
+                    </div>
+                    {playingItem.owner.displayName}
+                  </div>
+                  <Badge variant="outline" className="gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
+                    <Wand2 className="size-3" aria-hidden /> {COPY.aiInvolved}
+                  </Badge>
+                </div>
+                <Button
+                  onClick={() => {
+                    const item = playingItem
+                    setPlayingItem(null)
+                    void remix({ id: item.id, title: item.title })
+                  }}
+                  className="h-11 w-full gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white shadow-lg shadow-fuchsia-500/25 transition hover:opacity-90"
+                >
+                  <GitBranch className="size-4" aria-hidden /> {COPY.remixCta}
+                </Button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -613,64 +633,72 @@ function SectionHeader({ icon, title, desc, right }: { icon: React.ReactNode; ti
   )
 }
 
+/** 我的创作卡片：视觉优先（有成片封面时展示），主 CTA 进入创作空间 */
 function ContentCard({
   item,
   busy,
-  onNext,
   onRevise,
   onTimeline,
 }: {
   item: ContentListItem
   busy: boolean
-  onNext: () => void
   onRevise: () => void
   onTimeline: () => void
 }) {
-  const step = NEXT_STEP[item.status] ?? {}
   return (
-    <Card className="group border-white/10 bg-zinc-900/60 transition hover:border-fuchsia-400/25">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="line-clamp-2 font-medium leading-snug text-zinc-100">{item.title}</h3>
-          <Badge variant="outline" className={`shrink-0 text-[11px] ${statusBadgeClass(item.status)}`}>
-            {STATUS_LABEL[item.status] ?? item.status}
-          </Badge>
+    <Card className="group overflow-hidden border-white/10 bg-zinc-900/60 transition hover:border-fuchsia-400/25">
+      <a href={`/create/${item.id}`} className="block" aria-label={`继续创作 ${item.title}`}>
+        <div className="relative aspect-[16/10] w-full overflow-hidden bg-zinc-950">
+          {item.posterUrl ? (
+             
+            <img src={item.posterUrl} alt={item.title} className="h-full w-full object-cover opacity-90 transition group-hover:opacity-100 group-hover:scale-[1.02]" loading="lazy" />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-900 via-zinc-900 to-violet-950/40">
+              <div className="flex size-10 items-center justify-center rounded-xl border border-white/10 bg-white/5">
+                <Sparkles className="size-5 text-zinc-500" aria-hidden />
+              </div>
+            </div>
+          )}
+          <div className="absolute inset-x-0 bottom-0 flex items-end justify-between gap-2 bg-gradient-to-t from-black/70 to-transparent p-3">
+            <Badge variant="outline" className={`text-[11px] ${statusBadgeClass(item.status)}`}>
+              {STAGE_LABEL[item.status] ?? item.status}
+            </Badge>
+            {durationLabel(item.durationMs) && (
+              <span className="rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-zinc-300">{durationLabel(item.durationMs)}</span>
+            )}
+          </div>
         </div>
+      </a>
+      <CardHeader className="gap-2 pb-2 pt-3.5">
+        <h3 className="line-clamp-1 font-medium leading-snug text-zinc-100">{item.title}</h3>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
-          <span className="flex items-center gap-1"><GitBranch className="size-3" aria-hidden />v{item.currentVersion?.versionNumber ?? 0} · 共 {item._count.versions} 版</span>
+          <span>{item.currentVersion ? versionWithCount(item.currentVersion.versionNumber, item._count.versions) : '还没开始'}</span>
           {item._count.remixSources > 0 && (
-            <span className="flex items-center gap-1 text-fuchsia-300/80"><Copy className="size-3" aria-hidden />被 Remix ×{item._count.remixSources}</span>
+            <span className="flex items-center gap-1 text-fuchsia-300/80"><GitBranch className="size-3" aria-hidden />被续创 ×{item._count.remixSources}</span>
           )}
         </div>
       </CardHeader>
-      <CardContent className="pb-2">
+      <CardContent className="pb-1">
         <p className="line-clamp-1 text-xs text-zinc-500">
-          {item.currentVersion?.changelog ?? '还没有版本记录——完成初稿后会在这里看到变化。'}
+          {item.currentVersion?.changelog ?? '完成初稿后，这里会记录它的每一次生长。'}
         </p>
       </CardContent>
       <CardFooter className="flex flex-wrap gap-2">
-        {step.label ? (
-          <Button
-            size="sm"
-            disabled={busy}
-            onClick={onNext}
-            className="h-9 gap-1.5 bg-gradient-to-r from-violet-500/90 to-fuchsia-500/90 text-white hover:opacity-90"
-          >
-            {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <ArrowRight className="size-3.5" aria-hidden />}
-            {step.label}
-          </Button>
-        ) : (
-          <Badge variant="outline" className="gap-1 border-emerald-500/40 bg-emerald-500/10 text-[11px] text-emerald-300">
-            <BadgeCheck className="size-3" aria-hidden /> 已公开发布
-          </Badge>
-        )}
+        <Button
+          size="sm"
+          disabled={busy}
+          onClick={() => (window.location.href = `/create/${item.id}`)}
+          className="h-9 flex-1 gap-1.5 bg-gradient-to-r from-violet-500/90 to-fuchsia-500/90 text-white hover:opacity-90"
+        >
+          <ArrowRight className="size-3.5" aria-hidden /> {COPY.continueCreate}
+        </Button>
         <Button
           size="sm"
           variant="outline"
           onClick={onRevise}
           className="h-9 gap-1.5 border-white/15 bg-transparent text-zinc-300 hover:border-fuchsia-400/40 hover:text-white"
         >
-          <PenLine className="size-3.5" aria-hidden /> 修订
+          <PenLine className="size-3.5" aria-hidden /> 修改
         </Button>
         <Button
           size="sm"
@@ -678,57 +706,95 @@ function ContentCard({
           onClick={onTimeline}
           className="h-9 gap-1.5 border-white/15 bg-transparent text-zinc-300 hover:border-amber-400/40 hover:text-amber-200"
         >
-          <History className="size-3.5" aria-hidden /> 版本
+          <History className="size-3.5" aria-hidden /> 来路
         </Button>
       </CardFooter>
     </Card>
   )
 }
 
-function ExploreCard({ item, onRemix }: { item: ExploreItem; onRemix: () => void }) {
+/** 探索卡片（评审 P0-1 结构）：Visual Content → Title → Creator → AI involvement → Remix */
+function ExploreCard({
+  item,
+  busy,
+  onPlay,
+  onRemix,
+}: {
+  item: ExploreItem
+  busy: boolean
+  onPlay: () => void
+  onRemix: () => void
+}) {
   return (
-    <Card className="flex flex-col border-white/10 bg-zinc-900/60 transition hover:border-violet-400/25">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <h3 className="line-clamp-2 font-medium leading-snug text-zinc-100">{item.title}</h3>
-          <Badge variant="outline" className="shrink-0 gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
-            <Wand2 className="size-3" aria-hidden /> AI 协同
-          </Badge>
-        </div>
-        {item.remixOf?.sourceContent && (
-          <p className="flex items-center gap-1 text-xs text-fuchsia-300/80">
-            <GitBranch className="size-3" aria-hidden /> 基于《{item.remixOf.sourceContent.title}》
-          </p>
-        )}
-      </CardHeader>
-      <CardContent className="flex flex-1 items-center justify-between gap-3 pb-3">
-        <div className="flex items-center gap-2 text-sm text-zinc-300">
-          <div className="flex size-7 items-center justify-center rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 text-xs">
-            {item.owner.displayName.slice(0, 1)}
+    <Card className="group flex flex-col overflow-hidden border-white/10 bg-zinc-900/60 transition hover:border-violet-400/25">
+      {/* Visual Content —— 第一视觉元素 */}
+      <button onClick={onPlay} className="relative aspect-[9/16] w-full overflow-hidden bg-zinc-950" aria-label={`播放 ${item.title}`}>
+        {item.posterUrl ? (
+           
+          <img src={item.posterUrl} alt={item.title} className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]" loading="lazy" />
+        ) : (
+          <div className="flex h-full w-full items-end bg-gradient-to-br from-violet-950/60 via-zinc-900 to-zinc-950 p-4">
+            <p className="line-clamp-3 text-left text-sm leading-relaxed text-zinc-400">{item.currentVersion?.changelog ?? item.title}</p>
           </div>
-          {item.owner.displayName}
+        )}
+        <div className="absolute inset-0 flex items-center justify-center bg-black/0 transition group-hover:bg-black/20">
+          <span className="flex size-12 items-center justify-center rounded-full border border-white/20 bg-black/40 text-white backdrop-blur transition group-hover:scale-110">
+            <Play className="size-5 translate-x-0.5" aria-hidden />
+          </span>
         </div>
-        <div className="flex items-center gap-1.5 text-xs text-zinc-500">
-          <Heart className="size-3.5 text-rose-400/70" aria-hidden /> {item._count.interactions}
+        {durationLabel(item.durationMs) && (
+          <span className="absolute bottom-2.5 right-2.5 rounded-md bg-black/60 px-1.5 py-0.5 text-[10px] text-zinc-200">{durationLabel(item.durationMs)}</span>
+        )}
+        {item.remixOf?.sourceContent && (
+          <span className="absolute left-2.5 top-2.5 inline-flex max-w-[75%] items-center gap-1 rounded-full bg-black/55 px-2 py-1 text-[10px] text-fuchsia-200 backdrop-blur">
+            <GitBranch className="size-3 shrink-0" aria-hidden />
+            <span className="truncate">从《{item.remixOf.sourceContent.title}》开始</span>
+          </span>
+        )}
+      </button>
+
+      {/* Title */}
+      <div className="flex flex-1 flex-col px-4 pb-4 pt-3">
+        <h3 className="line-clamp-2 font-medium leading-snug text-zinc-100">{item.title}</h3>
+
+        {/* Creator */}
+        <div className="mt-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-2 text-sm text-zinc-300">
+            <div className="flex size-6 items-center justify-center rounded-full bg-gradient-to-br from-zinc-700 to-zinc-800 text-[10px]">
+              {item.owner.displayName.slice(0, 1)}
+            </div>
+            <span className="text-xs">{item.owner.displayName}</span>
+          </div>
+          <div className="flex items-center gap-1.5 text-xs text-zinc-500">
+            <Heart className="size-3.5 text-rose-400/70" aria-hidden /> {item._count.interactions}
+          </div>
         </div>
-      </CardContent>
-      <CardFooter>
-        <Button
-          size="sm"
-          onClick={onRemix}
-          className="h-9 w-full gap-1.5 bg-white/10 text-zinc-100 backdrop-blur transition hover:bg-gradient-to-r hover:from-violet-500 hover:to-fuchsia-500 hover:text-white"
-        >
-          <Copy className="size-3.5" aria-hidden /> Remix 这个作品
-        </Button>
-      </CardFooter>
+
+        {/* AI involvement + Remix（评审指定结构） */}
+        <div className="mt-3 space-y-2.5">
+          <Badge variant="outline" className="w-fit gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
+            <Wand2 className="size-3" aria-hidden /> {COPY.aiInvolved}
+          </Badge>
+          <Button
+            size="sm"
+            disabled={busy}
+            onClick={onRemix}
+            className="h-9 w-full gap-1.5 bg-white/10 text-zinc-100 backdrop-blur transition hover:bg-gradient-to-r hover:from-violet-500 hover:to-fuchsia-500 hover:text-white"
+          >
+            {busy ? <Loader2 className="size-3.5 animate-spin" aria-hidden /> : <GitBranch className="size-3.5" aria-hidden />}
+            {COPY.remixCta}
+          </Button>
+        </div>
+      </div>
     </Card>
   )
 }
 
 function SkeletonCard() {
   return (
-    <Card className="border-white/10 bg-zinc-900/40">
-      <CardHeader className="gap-2 pb-3">
+    <Card className="overflow-hidden border-white/10 bg-zinc-900/40">
+      <div className="aspect-[16/10] animate-pulse bg-zinc-800/60" />
+      <CardHeader className="gap-2 pb-3 pt-3.5">
         <div className="h-5 w-2/3 animate-pulse rounded bg-zinc-800" />
         <div className="h-3 w-1/3 animate-pulse rounded bg-zinc-800/70" />
       </CardHeader>
@@ -737,6 +803,19 @@ function SkeletonCard() {
         <div className="h-9 w-24 animate-pulse rounded-lg bg-zinc-800/70" />
         <div className="h-9 w-16 animate-pulse rounded-lg bg-zinc-800/50" />
       </CardFooter>
+    </Card>
+  )
+}
+
+function SkeletonExploreCard() {
+  return (
+    <Card className="overflow-hidden border-white/10 bg-zinc-900/40">
+      <div className="aspect-[9/16] animate-pulse bg-zinc-800/60" />
+      <div className="space-y-3 p-4">
+        <div className="h-5 w-3/4 animate-pulse rounded bg-zinc-800" />
+        <div className="h-3 w-1/2 animate-pulse rounded bg-zinc-800/70" />
+        <div className="h-9 w-full animate-pulse rounded-lg bg-zinc-800/50" />
+      </div>
     </Card>
   )
 }

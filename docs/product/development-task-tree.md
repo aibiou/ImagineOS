@@ -235,6 +235,26 @@ M0 Walking Skeleton      M1 First Video         M2 Creator Loop
 
 ---
 
+## 9A. Epic E7X — Platform Surface（M1，P0）★ 产品负责人 M0 评审裁决
+
+> 来源：docs/product/m0-review-m1-direction.md（2026-10-06 评审落档）。
+> M1 的核心命题：**用户看到内容以后，会不会产生"我也想创造一个"的冲动**。
+> 铁律：增量增强，不重构——不换 UI framework、不动路由结构、不推翻数据库/Content Object。
+
+- **T7X.1** Explore 视觉化卡片：视觉内容必须是卡片第一视觉元素
+  - 卡片结构：`Visual Content → Title → Creator → AI involvement → Remix`
+  - AC：视频封面/播放、图像、动态内容均有真实展示区域；无纯文字主形态卡片；占位也有结构化视觉区
+  - 测试：agent-browser 视觉断言（卡片含 poster/video 元素）
+- **T7X.2** 产品语言字典（用户语言层）：`src/app/_language/` 唯一 UI 文案规范源
+  - 映射：Content Object→作品 / V1→初稿·第2版 / Intent Engine→不可见 / Remix→「从这里开始我的版本」
+  - AC：最终用户体验路径 grep 不到工程术语（Content Object / Intent Engine / Generation Chain / V0）；工程词只允许出现在内部元数据与开发文档
+  - 测试：页面快照文案断言
+- **T7X.3** 创作空间 /create/[id]（增量页面，不动首页 IA）
+  - AC：从首页表达进入后完成 Intent→方向→故事→生成→预览全链；刷新可恢复状态
+- **T7X.4** 视觉语言微调：向电影感/内容感/人的温度演化（不加新发光效果）
+
+---
+
 ## 10. Epic E8 — Creator UX（M2，P0）
 
 > 目标：§76 的 Home→Imagine→Intent→Direction→Story→Generation 全流程界面。

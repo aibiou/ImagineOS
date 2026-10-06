@@ -108,6 +108,13 @@ export const versionService = {
     })
   },
 
+  /** 当前版本（含密封配方；修订定位等读取场景用） */
+  async getCurrentVersion(contentId: string): Promise<ContentVersion | null> {
+    const content = await contentRepo.findById(db, contentId)
+    if (!content?.currentVersionId) return null
+    return versionRepo.findById(db, content.currentVersionId)
+  },
+
   /** 版本时间线（查看/继续编辑/恢复的数据源） */
   async listTimeline(contentId: string) {
     const versions = await versionRepo.listByContent(db, contentId)

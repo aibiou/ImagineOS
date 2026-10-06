@@ -185,6 +185,7 @@ model Story {
   logline        String?
   arcJson        String? // 叙述弧 + 情绪曲线
   narrationStyle String?
+  draftJson      String? // 工作副本完整快照（含 imagePrompt 等配方字段，Zod 校验）
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
