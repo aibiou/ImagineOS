@@ -4,7 +4,7 @@
 // 保持 M0 信息架构（评审 P1：Home→主创作入口→我的创作→探索，不重构）；
 // P0-1 Explore 视觉化：视觉内容是卡片第一元素；P0-2 「你想表达什么？」保持核心入口；
 // P0-3 全部文案走产品语言字典（src/app/_language）；
-// P1 Remix 文案 →「从这里开始我的版本」。
+// P1 Remix 文案 →「从这里开始创作」（用户语言规则 user-language-rules.md §4）。
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
@@ -452,7 +452,7 @@ export default function Home() {
             <Sparkles className="size-3.5 text-fuchsia-400/70" aria-hidden />
             <span>ImagineOS Alpha</span>
           </div>
-          <div>每一件作品都带着它的完整来路 · 任何人都能从这里开始自己的版本</div>
+          <div>每一件作品都带着它的完整来路 · 任何人都能从这里开始创作</div>
         </div>
       </footer>
 

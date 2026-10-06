@@ -55,6 +55,12 @@ export const ShotSnapshotSchema = z.object({
   durationMs: z.number().int().positive().optional(),
   narrationLine: z.string().optional(),
   emotion: z.string().optional(),
+  /**
+   * 镜头运动路径（M1.5 Gate 6 / ADR-0001 修订）：composition = 组合式（图像 + Ken Burns），
+   * native = 原生视频（图像首帧 + video.shot 图生视频）。缺省 composition（向后兼容）。
+   * 由管线/评估层调度，不由 LLM 决定（模型选择不出现在业务层的纪律）。
+   */
+  motion: z.enum(['composition', 'native']).optional(),
 })
 export type ShotSnapshot = z.infer<typeof ShotSnapshotSchema>
 

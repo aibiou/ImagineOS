@@ -50,3 +50,42 @@ Storyboard(Shots) → 逐镜头图像生成 → Ken Burns 运镜 + xfade 转场
 ## 替代方案
 
 混合（A+B 并行）：Alpha 同时维护两条 Provider 链——被否：违反 §73"只接真正需要的"，双链维护成本在单人节奏下不可承受。
+
+---
+
+## 修订 Rev.2（2026-10-06，M1.5 Expression Quality Gate）
+
+**状态变更：Accepted（双路径）** —— 触发了原 ADR 预设的升级条件。
+
+### 触发证据（Gate 6 Visual Quality 评估）
+
+组合式管线（图像 + Ken Burns + xfade）在 M1.5 的 10 案例实测中确认了原 ADR 记录的质量上限：镜头内无真实运动（人物不动、无环境动态），"静态画面 + 音轨 + 转场"的观感占主导；对人物故事/情绪/强想象类表达，"被看见的价值"受损。
+
+同时两个环境事实落定：
+1. z-ai SDK 实测提供 `video.generations.create`（cogvideox-3，图生视频，speed 模式 ~60s/镜）；
+2. Model Router 的注册表结构（M0 落地）使新能力接入的业务层改动为零——原 ADR 的验证目标达成。
+
+### 决定
+
+保留 Composition Pipeline，同时建立 Native Video Provider Adapter，两条路径由 Model Router 调度：
+
+```text
+Shot.motion = composition（缺省） → image.shot 生成首帧 → Ken Burns 运镜（原路径）
+Shot.motion = native             → image.shot 生成首帧 → video.shot 图生视频 → 视频段直接入合成
+                                    （失败回落 composition，Provenance 记 native-fallback）
+```
+
+- 新增能力 `video.shot`（types/registry/`zai-video` provider，cogvideox-3）；
+- 合成层 `ComposeShotInput.videoPath`：有视频段的镜头跳过 Ken Burns，下游 xfade/字幕/音频链复用；
+- 调度点在管线层（配方 `motion` 字段 + 评估开关 `IMAGINEOS_FORCE_NATIVE`），不由 LLM 决定——延续"模型选择不出现在业务层"的纪律；
+- 两条路径落入同一 Evaluation Framework（Generation 记账 + Golden Case 对比）。
+
+### 与"替代方案：混合（A+B 并行）"的关系
+
+原否决理由（双链维护成本）在 Gate 6 证据面前被推翻一半：混合路径不是"两个整片管线并行"，而是**镜头级分叉 + 单一合成层**——维护面收敛在 `videoPath` 一个字段的分叉点。教训：原 ADR 把"混合"理解成了整片级的 A/B，镜头级分叉的代价远小于此。
+
+### 影响
+
+- 版本配方（ShotSnapshot）新增可选 `motion` 字段，旧配方零迁移（缺省 composition）；
+- Native 路径成本/延迟约为组合式的 3–5 倍（60s/镜 vs 15s/镜），调度策略在 M2 按用户分层再定；
+- Visual Quality Eval 从"组合式基线"升级为"双路径对比"，cogvideox 首帧一致性成为新的评测维度。

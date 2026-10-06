@@ -1,6 +1,6 @@
 // Content 生命周期服务（§48 / §51 / §63 前段）
 // 边界纪律：本文件不 import 任何模型 SDK（ADR-0002 lint 守卫）
-import { db } from '@/lib/db'
+import { db, SQLITE_TX_TIMEOUT } from '@/lib/db'
 import { DomainValidationError, IllegalTransitionError, NotFoundError } from '@/core/errors'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
@@ -38,7 +38,7 @@ export const contentService = {
         payload: { rawExpressionChars: input.text.length, initialStatus: 'IDEA' },
       })
       return content
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   async getOwnedOrVisibleContent(contentId: string, viewerId: string | null) {
@@ -80,7 +80,7 @@ export const contentService = {
         payload: { from, to, ...(opts?.note ? { note: opts.note } : {}) },
       })
       return updated
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   async setMetadata(
@@ -95,7 +95,7 @@ export const contentService = {
         throw new DomainValidationError('只有作者可以修改作品元数据')
       }
       return contentRepo.update(tx, contentId, data)
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   /** 最小发布（完整发布表单/封面选择属 E10/M3；此处打通状态+Publication+可见性） */
@@ -137,7 +137,7 @@ export const contentService = {
         payload: { visibility: input.visibility },
       })
       return updated
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   /** Remix 血缘查询（衍生作品 → 源作品） */

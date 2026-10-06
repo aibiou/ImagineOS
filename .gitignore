@@ -55,3 +55,11 @@ server.log
 # generated media assets
 storage/
 storage-smoke-*
+# ImagineOS 运行数据（不入库：DB/生成资产/临时产物）
+prisma/*.db
+db/*.db
+scripts/m15/state/
+scripts/m15/frames/
+tool-results/
+agent-ctx/
+examples/

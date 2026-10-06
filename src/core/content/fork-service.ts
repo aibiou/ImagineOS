@@ -1,7 +1,7 @@
 // Fork / Remix 原语（§35 / §79 / 不变量 I2）
 // Remix = 复制原作品的可授权创作结构 + 建立血缘三件套 + 原作零改动
 // Alpha 语义：新作者从源作品的创作阶段继续，进入自己的创作循环
-import { db } from '@/lib/db'
+import { db, SQLITE_TX_TIMEOUT } from '@/lib/db'
 import { DomainValidationError, NotFoundError, RemixNotAllowedError } from '@/core/errors'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { versionRepo } from '@/core/repositories/version-repo'
@@ -99,6 +99,6 @@ export const forkService = {
       }
 
       return { content: newContent, version: newVersion, remix }
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 }

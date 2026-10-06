@@ -114,11 +114,14 @@ export const generationFlow = {
     return { jobId: job.id }
   },
 
-  /** 重新生成（REVIEW/READY：同版本重跑画面+配音；T9.1.1 AC「重新生成→新 Job（同 Version）」） */
+  /** 重新生成（REVIEW/READY：同版本重跑；GENERATING：失败恢复重试——T9.1.1 AC「重新生成→新 Job（同 Version）」）
+   *
+   * M1.5 修复：Job 失败（如 provider 429 重试耗尽）后状态机原地留在 GENERATING（§51 不丢用户工作），
+   * 但原实现只允许 REVIEW/READY 重入——失败后无恢复入口。现补充 GENERATING 分支（无活跃 Job 才可入，assertNoActiveJob 已保证）。 */
   async regenerate(contentId: string, actorId: string): Promise<StartGenerationResult> {
     const content = await requireOwnedContent(contentId, actorId)
-    if (content.status !== 'REVIEW' && content.status !== 'READY') {
-      throw new DomainValidationError(`只有预览或就绪状态才能重新生成（当前：${content.status}）`)
+    if (content.status !== 'REVIEW' && content.status !== 'READY' && content.status !== 'GENERATING') {
+      throw new DomainValidationError(`只有预览、就绪或生成失败后才能重新生成（当前：${content.status}）`)
     }
     await assertNoActiveJob(contentId)
     const versionId = content.currentVersionId

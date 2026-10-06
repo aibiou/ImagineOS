@@ -4,7 +4,7 @@
 
 // ---------- 能力分类（§29） ----------
 
-export const CAPABILITIES = ['text.plan', 'image.shot', 'audio.tts', 'video.compose'] as const
+export const CAPABILITIES = ['text.plan', 'image.shot', 'audio.tts', 'video.shot', 'video.compose'] as const
 export type Capability = (typeof CAPABILITIES)[number]
 
 // ---------- 调用上下文（记账与溯源用） ----------
@@ -64,6 +64,27 @@ export interface AudioTTSResult {
   mime: string
 }
 
+// video.shot（M1.5 Gate 6）：镜头级原生视频生成（图生视频：首帧 + 运动提示词）
+// 与 video.compose（整片组合式合成）互补：两条路径由管线按镜头配方 motion 字段调度。
+export interface VideoShotPayload {
+  /** 运动描述提示词（镜头动态、氛围） */
+  prompt: string
+  /** 首帧图（data URL 或公网 URL；分镜图生视频） */
+  imageUrl: string
+  /** 目标分辨率（如 '720x1280'） */
+  size?: string
+  /** 期望时长（秒；provider 尽力而为） */
+  durationSec?: number
+  /** 速度优先（评估/迭代用） */
+  speedFirst?: boolean
+}
+
+export interface VideoShotResult {
+  base64: string
+  mime: string
+  durationMs?: number
+}
+
 // video.compose 的 Payload/Result 由 src/media 合成器定义（组合式管线，ADR-0001），
 // Provider 只做能力转发，此处不重复建模。
 
@@ -92,7 +113,12 @@ export interface AudioTTSProvider extends BaseProvider {
   execute(payload: AudioTTSPayload, ctx: ProviderCallContext): Promise<AudioTTSResult>
 }
 
-export type AnyProvider = TextPlanProvider | ImageShotProvider | AudioTTSProvider
+export interface VideoShotProvider extends BaseProvider {
+  capability: 'video.shot'
+  execute(payload: VideoShotPayload, ctx: ProviderCallContext): Promise<VideoShotResult>
+}
+
+export type AnyProvider = TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider
 
 // ---------- 路由结果（带执行元数据） ----------
 

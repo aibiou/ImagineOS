@@ -12,6 +12,7 @@ import { generationLog } from '@/ai/router/generation-log'
 import { zaiLlmProvider } from '@/ai/providers/zai-llm'
 import { zaiImageProvider } from '@/ai/providers/zai-image'
 import { zaiTtsProvider } from '@/ai/providers/zai-tts'
+import { zaiVideoProvider } from '@/ai/providers/zai-video'
 import {
   ProviderExhaustedError,
   type AudioTTSPayload,
@@ -24,6 +25,9 @@ import {
   type TextPlanPayload,
   type TextPlanProvider,
   type TextPlanResult,
+  type VideoShotPayload,
+  type VideoShotProvider,
+  type VideoShotResult,
 } from '@/ai/router/types'
 
 // ---------- 注册表 ----------
@@ -31,12 +35,18 @@ import {
 const textPlanChain: TextPlanProvider[] = [zaiLlmProvider]
 const imageShotChain: ImageShotProvider[] = [zaiImageProvider]
 const audioTtsChain: AudioTTSProvider[] = [zaiTtsProvider]
+// video.shot（M1.5 Gate 6）：原生视频链；未注册任何 provider 时管线回落组合式（Ken Burns）
+const videoShotChain: VideoShotProvider[] = [zaiVideoProvider]
 
 /** 测试/扩展用：向能力链注册 provider（不指定位置则置为候选首位） */
 export function registerProvider(provider: TextPlanProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(provider: ImageShotProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(provider: AudioTTSProvider, opts?: { prepend?: boolean }): void
-export function registerProvider(provider: TextPlanProvider | ImageShotProvider | AudioTTSProvider, opts?: { prepend?: boolean }): void {
+export function registerProvider(provider: VideoShotProvider, opts?: { prepend?: boolean }): void
+export function registerProvider(
+  provider: TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider,
+  opts?: { prepend?: boolean },
+): void {
   const prepend = opts?.prepend ?? true
   switch (provider.capability) {
     case 'text.plan': {
@@ -60,6 +70,13 @@ export function registerProvider(provider: TextPlanProvider | ImageShotProvider 
       else audioTtsChain.push(provider)
       break
     }
+    case 'video.shot': {
+      const i = videoShotChain.findIndex((p) => p.id === provider.id)
+      if (i >= 0) videoShotChain[i] = provider
+      else if (prepend) videoShotChain.unshift(provider)
+      else videoShotChain.push(provider)
+      break
+    }
   }
 }
 
@@ -71,6 +88,8 @@ export function resetRegistry(): void {
   imageShotChain.push(zaiImageProvider)
   audioTtsChain.length = 0
   audioTtsChain.push(zaiTtsProvider)
+  videoShotChain.length = 0
+  videoShotChain.push(zaiVideoProvider)
 }
 
 /** 测试用：完全清空（阻断一切真实调用） */
@@ -78,6 +97,12 @@ export function clearRegistry(): void {
   textPlanChain.length = 0
   imageShotChain.length = 0
   audioTtsChain.length = 0
+  videoShotChain.length = 0
+}
+
+/** 测试/评估用：当前 video.shot 链是否有可用 provider（无则管线回落组合式） */
+export function hasVideoShotProvider(): boolean {
+  return videoShotChain.length > 0
 }
 
 // ---------- 重试与超时 ----------
@@ -101,6 +126,7 @@ const TIMEOUTS: Record<string, number> = {
   'text.plan': 90_000,
   'image.shot': 180_000,
   'audio.tts': 120_000,
+  'video.shot': 330_000, // 含提交+轮询+下载（provider 内部 5min 轮询上限 + 余量）
 }
 
 async function runWithRetry<P, R>(
@@ -205,5 +231,22 @@ export const router = {
       }
     }
     throw new ProviderExhaustedError('audio.tts', attempts)
+  },
+
+  async video(
+    payload: VideoShotPayload,
+    ctx: ProviderCallContext,
+  ): Promise<{ result: VideoShotResult; providerId: string; model: string }> {
+    if (videoShotChain.length === 0) throw new ProviderExhaustedError('video.shot', [{ providerId: '(none)', error: '无注册 provider' }])
+    const attempts: Array<{ providerId: string; error: string }> = []
+    for (const provider of [...videoShotChain]) {
+      try {
+        const result = await runWithRetry('video.shot', provider, payload, ctx)
+        return { result, providerId: provider.id, model: provider.model }
+      } catch (e) {
+        attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    throw new ProviderExhaustedError('video.shot', attempts)
   },
 }

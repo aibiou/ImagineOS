@@ -923,7 +923,7 @@ function FinishStage({
   const hasVideo = assets.final != null
   const dur = durationLabel(assets.final?.durationMs ?? null)
 
-  // Remix 起点且还没有自己的成片：邀请生成自己的版本
+  // Remix 起点且还没有自己的成片：邀请生成自己的创作
   if (!hasVideo) {
     return (
       <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -934,11 +934,11 @@ function FinishStage({
             </div>
             <div className="text-lg font-medium text-zinc-100">这个作品的配方已经在你手上</div>
             <p className="max-w-md text-sm leading-relaxed text-zinc-400">
-              画面与声音会由 AI 为你重新创作——它会带上你的气息，而不是别人的像素。生成之后，就是完全属于你的版本。
+              画面与声音会由 AI 为你重新创作——它会带上你的气息，而不是别人的像素。生成之后，就是完全属于你的作品。
             </p>
             <Button size="lg" disabled={busy != null} onClick={onStartOwn} className="mt-2 gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-8 text-white shadow-lg shadow-fuchsia-500/25 transition hover:opacity-90 disabled:opacity-50">
               {busy === 'regenerate' ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}
-              生成我的版本
+              开始我的创作
             </Button>
           </CardContent>
         </Card>
@@ -974,7 +974,7 @@ function FinishStage({
       <div className="flex flex-wrap items-center gap-3">
         {published ? (
           <Badge variant="outline" className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-            <BadgeCheck className="size-4" aria-hidden /> 已发布 · 别人可以从这里开始他们的版本
+            <BadgeCheck className="size-4" aria-hidden /> 已发布 · 别人可以从这里开始创作
           </Badge>
         ) : (
           <Button size="lg" disabled={busy != null} onClick={onPublish} className="gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-6 text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50">
@@ -992,7 +992,7 @@ function FinishStage({
 
       {!published && (
         <p className="text-xs leading-relaxed text-zinc-600">
-          发布后它会出现在「探索」里——其他人看到它，可以从这里开始自己的版本，而你的原作永远属于你。
+          发布后它会出现在「探索」里——其他人看到它，可以从这里开始自己的创作，而你的原作永远属于你。
         </p>
       )}
     </motion.section>

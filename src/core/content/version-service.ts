@@ -1,6 +1,6 @@
 // 版本系统服务（§24–§25）
 // 核心不变量：修订永不覆盖旧版本；restore = 创建指向被恢复内容的新版本
-import { db } from '@/lib/db'
+import { db, SQLITE_TX_TIMEOUT } from '@/lib/db'
 import { DomainValidationError, NotFoundError } from '@/core/errors'
 import { versionRepo } from '@/core/repositories/version-repo'
 import { contentRepo } from '@/core/repositories/content-repo'
@@ -63,7 +63,7 @@ export const versionService = {
         payload: { versionNumber, method: input.method, changelog: input.changelog ?? null },
       })
       return version
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   /**
@@ -105,7 +105,7 @@ export const versionService = {
         payload: { restoredFromVersionNumber: target.versionNumber, newVersionNumber: versionNumber },
       })
       return version
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 
   /** 当前版本（含密封配方；修订定位等读取场景用） */

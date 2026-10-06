@@ -16,8 +16,10 @@ const FFMPEG = process.env.IMAGINEOS_FFMPEG ?? 'ffmpeg'
 const FFPROBE = process.env.IMAGINEOS_FFPROBE ?? 'ffprobe'
 
 export interface ComposeShotInput {
-  /** 分镜图像绝对路径 */
+  /** 分镜图像绝对路径（首帧；composition 路径的像素源 / native 路径的首帧） */
   imagePath: string
+  /** 原生视频段绝对路径（M1.5 Gate 6 native 路径；有此字段时跳过 Ken Burns） */
+  videoPath?: string
   /** 配方时长（毫秒）——实际时长会考虑旁白长度取 max */
   durationMs: number
   cameraMotion: 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'static'
@@ -228,28 +230,57 @@ export async function composeVideo(spec: ComposeSpec): Promise<ComposeResult> {
   const totalSec = durSec.reduce((a, b) => a + b, 0) - (shots.length - 1) * transSec
   const totalMs = Math.round(totalSec * 1000)
 
-  // ---- 3. 逐镜头 Ken Burns 段 ----
+  // ---- 3. 逐镜头段（composition：Ken Burns；native：视频段标准化） ----
   const segFiles: string[] = []
   for (let i = 0; i < shots.length; i++) {
     const shot = shots[i]!
     const frames = framesPerShot[i]!
     const segPath = `seg_${i}.mp4`
-    const vf = kenBurnsFilter(spec, frames, shot.cameraMotion)
-    await run(
-      FFMPEG,
-      [
-        '-y',
-        '-i', shot.imagePath,
-        '-filter_complex', `format=pix_fmts=yuv420p,${vf},fps=${fps}`,
-        '-frames:v', String(frames),
-        '-c:v', 'libx264',
-        '-preset', 'veryfast',
-        '-crf', '20',
-        '-r', String(fps),
-        segPath,
-      ],
-      { cwd: spec.workDir, label: `kenburns#seg${i}`, timeoutMs: 120_000 },
-    )
+    if (shot.videoPath) {
+      // native 路径：视频段 → 统一分辨率/帧率/时长（不足定格补齐，超长截断）
+      const targetSec = frames / fps
+      await run(
+        FFMPEG,
+        [
+          '-y',
+          '-i', shot.videoPath,
+          '-filter_complex',
+          [
+            `scale=${spec.width}:${spec.height}:force_original_aspect_ratio=increase`,
+            `crop=${spec.width}:${spec.height}`,
+            `fps=${fps}`,
+            `tpad=stop_mode=clone:stop_duration=${Math.max(0, targetSec).toFixed(3)}`,
+            'format=pix_fmts=yuv420p',
+          ].join(','),
+          '-frames:v', String(frames),
+          '-an', // 音轨由组合层统一编排（TTS 旁白时间线）
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '20',
+          '-r', String(fps),
+          segPath,
+        ],
+        { cwd: spec.workDir, label: `nativeseg#seg${i}`, timeoutMs: 120_000 },
+      )
+    } else {
+      // composition 路径：首帧图像 + Ken Burns 运镜
+      const vf = kenBurnsFilter(spec, frames, shot.cameraMotion)
+      await run(
+        FFMPEG,
+        [
+          '-y',
+          '-i', shot.imagePath,
+          '-filter_complex', `format=pix_fmts=yuv420p,${vf},fps=${fps}`,
+          '-frames:v', String(frames),
+          '-c:v', 'libx264',
+          '-preset', 'veryfast',
+          '-crf', '20',
+          '-r', String(fps),
+          segPath,
+        ],
+        { cwd: spec.workDir, label: `kenburns#seg${i}`, timeoutMs: 120_000 },
+      )
+    }
     segFiles.push(segPath)
   }
 

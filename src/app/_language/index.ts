@@ -54,9 +54,11 @@ export const METHOD_LABEL: Record<string, string> = {
 // ---------- 核心动作（评审指定文案） ----------
 
 export const COPY = {
-  remixCta: '从这里开始我的版本',
-  remixCtaShort: '创造我的版本',
-  remixDone: '你的版本已经开始了',
+  // 2026-10-06 用户语言规则（docs/product/user-language-rules.md §4）：
+  // 普通用户界面禁止直接显示 Remix，默认「从这里开始创作」。
+  remixCta: '从这里开始创作',
+  remixCtaShort: '开始创作',
+  remixDone: '你的创作已经开始了',
   reviseCta: '继续修改',
   revisionTitle: '你想怎么改？',
   revisionConfirm: '就这样改，重新生成',

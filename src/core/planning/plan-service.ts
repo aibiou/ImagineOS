@@ -1,7 +1,7 @@
 // Creative Plan 持久化服务（§18–§19）
 // 工作副本语义：Story/Scene/Shot 表是创作过程中的可编辑工作区；
 // 进入生成（GENERATING）前，配方密封进 ContentVersion.structureJson（不可变快照）。
-import { db } from '@/lib/db'
+import { db, SQLITE_TX_TIMEOUT } from '@/lib/db'
 import { DomainValidationError, NotFoundError } from '@/core/errors'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
@@ -240,6 +240,6 @@ export const planService = {
           })
         }
       }
-    })
+    }, SQLITE_TX_TIMEOUT)
   },
 }

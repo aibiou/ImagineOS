@@ -10,7 +10,7 @@
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import { router } from '@/ai/router/registry'
+import { router, hasVideoShotProvider } from '@/ai/router/registry'
 import type { ImageSize, ProviderCallContext } from '@/ai/router/types'
 import { jobService } from '@/core/jobs/job-service'
 import { contentRepo } from '@/core/repositories/content-repo'
@@ -63,6 +63,28 @@ function imagePromptFor(shot: ShotSnapshot, structure: VersionStructure): string
   return `${base}. Visual style: ${style}. No text, no watermark, no subtitles in image.`
 }
 
+/** 镜头运动路径：配方字段优先，评估开关 IMAGINEOS_FORCE_NATIVE=1 强制 native（M1.5 Gate 6） */
+function motionModeFor(shot: ShotSnapshot): 'composition' | 'native' {
+  if (process.env.IMAGINEOS_FORCE_NATIVE === '1') return 'native'
+  return shot.motion ?? 'composition'
+}
+
+/** 图生视频运动提示词：首帧已定画面，描述的是“这一镜怎么动起来” */
+function videoPromptFor(shot: ShotSnapshot, structure: VersionStructure): string {
+  const style = structure.style ?? structure.concept?.visualDirection ?? 'cinematic, warm tone'
+  const base = shot.imagePrompt ?? shot.visualDescription ?? 'a quiet cinematic moment'
+  const cam: Record<string, string> = {
+    zoom_in: 'slow cinematic push in',
+    zoom_out: 'slow cinematic pull back',
+    pan_left: 'gentle pan to the left',
+    pan_right: 'gentle pan to the right',
+    static: 'subtle handheld drift',
+  }
+  const motion = cam[shot.cameraMotion ?? 'zoom_in'] ?? 'subtle camera drift'
+  const emotion = shot.emotion ? `, overall mood: ${shot.emotion}` : ''
+  return `${base}. Camera: ${motion}. Natural ambient movement within the scene (wind, light, fabric, subtle life), subjects move naturally. Visual style: ${style}${emotion}. No text, no watermark.`
+}
+
 /** 安全推进（Job 驱动；若 UI 侧已推进到目标态则跳过） */
 async function safeAdvance(contentId: string, to: string, actorId: string | null, note: string) {
   try {
@@ -88,9 +110,9 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   if (shots.length === 0) throw new Error('配方中没有镜头（先完成分镜）')
   const size = imageSizeFor(structure)
 
-  const shotAssets: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string }> = []
+  const shotAssets: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string }> = []
 
-  // ---- 图像（逐镜头；并发 2 提速，进度按完成数上报） ----
+  // ---- 图像 + 可选原生视频（逐镜头；并发 2 提速，进度按完成数上报） ----
   const IMAGE_CONCURRENCY = 2
   let imageDone = 0
   const imageTasks = shots.map((shot, i) => async () => {
@@ -105,7 +127,47 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       data: Buffer.from(result.base64, 'base64'),
       declaredMime: result.mime,
     })
-    shotAssets.push({ shotIndex: i, imageAssetId: imageAsset.id })
+    const entry: { shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string } = {
+      shotIndex: i,
+      imageAssetId: imageAsset.id,
+    }
+
+    // native 路径（M1.5 Gate 6）：首帧图生视频；失败回落组合式（不丢用户工作）
+    if (motionModeFor(shot) === 'native' && hasVideoShotProvider()) {
+      try {
+        const { result: videoResult } = await router.video(
+          {
+            prompt: videoPromptFor(shot, structure),
+            imageUrl: `data:${result.mime};base64,${result.base64}`,
+            size: '720x1280',
+            speedFirst: true,
+          },
+          { ...ctx, purpose: 'shot.video' },
+        )
+        const videoAsset = await assetService.save({
+          contentId: content.id,
+          ownerId: content.ownerId,
+          kind: 'generated',
+          data: Buffer.from(videoResult.base64, 'base64'),
+          declaredMime: videoResult.mime,
+        })
+        entry.videoAssetId = videoAsset.id
+      } catch (e) {
+        const message = e instanceof Error ? e.message : String(e)
+        console.warn(`[pipeline] 镜头 ${i + 1} 原生视频生成失败，回落组合式（Ken Burns）：${message}`)
+        await provenanceRepo.append(db, {
+          contentId: content.id,
+          versionId: version.id,
+          eventType: 'ai_generated',
+          actorType: 'ai',
+          provider: 'pipeline',
+          model: 'native-fallback',
+          payload: { stage: 'video.shot.fallback', shotIndex: i, error: message.slice(0, 300) },
+        })
+      }
+    }
+
+    shotAssets.push(entry)
     imageDone++
     await jobService.reportProgress(jobId, {
       stage: 'images',
@@ -177,7 +239,7 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
   if (!storyboardJob?.outputJson) throw new Error('找不到已完成的分镜生成记录（先完成画面生成）')
 
   const sbOutput = JSON.parse(storyboardJob.outputJson) as {
-    shotAssets?: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string }>
+    shotAssets?: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string }>
   }
   const shotAssets = sbOutput.shotAssets ?? []
   const shots = allShots(structure)
@@ -190,13 +252,25 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
   await mkdir(workDir, { recursive: true })
 
   // 资产路径解析
-  const resolved: Array<{ imagePath: string; durationMs: number; cameraMotion: string; narrationPath?: string; narrationLine?: string }> = []
+  const resolved: Array<{
+    imagePath: string
+    videoPath?: string
+    durationMs: number
+    cameraMotion: string
+    narrationPath?: string
+    narrationLine?: string
+  }> = []
   for (const { entry, shot } of shotAssets
     .slice()
     .sort((a, b) => a.shotIndex - b.shotIndex)
     .map((entry) => ({ entry, shot: shots[entry.shotIndex] ?? shots[0]! }))) {
     const imageAsset = await assetService.getById(entry.imageAssetId)
     if (!imageAsset) throw new Error(`镜头 ${entry.shotIndex + 1} 的图像资产不存在`)
+    let videoPath: string | undefined
+    if (entry.videoAssetId) {
+      const videoAsset = await assetService.getById(entry.videoAssetId)
+      if (videoAsset) videoPath = assetService.resolveLocalPath(videoAsset.storageLocation)
+    }
     let narrationPath: string | undefined
     if (entry.ttsAssetId) {
       const ttsAsset = await assetService.getById(entry.ttsAssetId)
@@ -204,6 +278,7 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
     }
     resolved.push({
       imagePath: assetService.resolveLocalPath(imageAsset.storageLocation),
+      videoPath,
       durationMs: shot.durationMs ?? 6000,
       cameraMotion: shot.cameraMotion ?? 'zoom_in',
       narrationPath,
@@ -219,6 +294,7 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
   const composeResult = await composeVideo({
     shots: resolved.map((s) => ({
       imagePath: s.imagePath,
+      videoPath: s.videoPath,
       durationMs: s.durationMs,
       cameraMotion: (['zoom_in', 'zoom_out', 'pan_left', 'pan_right', 'static'] as const).includes(s.cameraMotion as never)
         ? (s.cameraMotion as 'zoom_in' | 'zoom_out' | 'pan_left' | 'pan_right' | 'static')
