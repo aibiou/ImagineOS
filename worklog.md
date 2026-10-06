@@ -247,3 +247,24 @@ Stage Summary:
 - 「字段和背景冲突」根因（暗色页面漏挂 dark 类）+ 表现层（低对比文字）双修复，像素级证据 AAA 13.8:1
 - 设置页对比度体系：字段面板 13.8:1 / 辅助文字 ≥7:1 / 输入框实底清晰边界
 - 继续等待产品负责人配置真实 API Key → 触发 Phase B 补跑
+
+---
+Task ID: multi-provider-004
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 模型列表一键获取 + 所选模型真实验证（产品负责人需求：输入 URL 和密钥后点击自动获取有权限的模型名供选择，然后测试验证所选模型行不行）
+
+Work Log:
+- 服务层（2a50ad2）：fetchAvailableModels（GET /models 零消耗，双形态解析 {data:[{id}]} | 字符串数组，401/404 分别给「密钥无效/请手动填写」可读错误）；verifyModelForChannel 分通道真实最小调用——llm 真实对话（max_tokens=8 近零消耗，回报回复样本）、tts 真实合成（回报字节数）、image 真实生图（UI 二次确认消耗）、video 不实调（成本高，按列表存在性说明）；runConnectionTest 升级为两步（连接 → 模型真实验证），消息合成 + modelVerified 回传落库
+- 过程缺陷修复：lightRequest 非 2xx 时未解析 JSON 错误体（服务商 "model not found" 信息丢失）→ 补 JSON.parse（单测捕获）
+- 新路由 POST /api/settings/model-providers/models：{baseUrl,apiKey}（新增表单）与 {configId}（编辑表单复用已存密钥，明文不出服务端）双模式；422 非法 / 502 上游错误
+- 纯模块 src/lib/model-catalog.ts：通道模式排序（推荐组/其他组 optgroup；llm 排除护栏防 gpt-image-1/*-tts 混入对话推荐）——客户端与测试共享、不依赖 db
+- UI：模型名称旁「获取模型列表」按钮（地址+密钥就绪才启用）→ 分组下拉选择自动填入（保留手填）；卡片按钮改「测试验证」（image 通道消耗确认弹窗）；三步引导更新
+- 测试：+12（列表解析/鉴权失败/四通道请求形态/404 错误透出/video 零实调保证/目录排序）→ 60/60 全绿
+- E2E：scripts/e2e-model-list.mjs 22 断言全过（key 拉取/configId 拉取/保存/真实对话验证/落库/tts 真实合成/video 跳过说明）；agent-browser UI 全链（获取→分组选择→保存→测试验证→清理）
+- 沙箱新知：独立 node 进程（mock）跨工具调用必被回收（setsid+nohup+disown 亦无效）——UI 验证须在单次调用内完成（ui-verify-model-list.sh 模式）
+- 重要发现：产品负责人已自行配置真实服务 agnes-com（apihub.agnes-ai.com）三条通道——image: agnes-image-2.0-flash / llm: agnes-3.0-flash / video: agnes-video-2.5-flash，全部 enabled、旧连接测试 ok（tts 未配置）；UI 验证全程未触碰该配置
+
+Stage Summary:
+- 「点击自动获取模型名 + 选择 + 测试验证所选模型」完整落地：拉列表（零消耗）→ 分组选择 → 真实调用验证（llm/tts 近零消耗，image 一次生图，video 说明性跳过）
+- Phase B 解锁钥匙已就位：agnes-com 三通道已配置且启用——LLM 通道可立即真实验证（近零消耗）；建议产品负责人在页面点「测试验证」确认（image 会消耗一次生图）
+- 下一步：跑 finish-m15.mjs 补 Phase B（llm/image 走 agnes-com，video 通道 agnes 为 SiliconFlow 风格提交/查询协议是否兼容待首个任务验证，失败自动回退内置）
