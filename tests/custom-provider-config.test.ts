@@ -219,6 +219,124 @@ describe('OpenAI 兼容适配器（mock fetch，不触网）', () => {
     if (!provider || provider.capability !== 'video.shot') throw new Error('应构建视频 provider')
     await expect(provider.execute({ prompt: 'p', imageUrl: 'data:' }, ctx)).rejects.toThrow(/不兼容|requestId/)
   })
+
+  it('图像：URL 下载不带鉴权头（S3 预签名 URL 附加 Authorization 会 401——Agnes 实测）', async () => {
+    let downloadHeaders: Record<string, string> | undefined
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/images/generations')) {
+        return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.com/presigned.png' }] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      downloadHeaders = (init?.headers ?? {}) as Record<string, string>
+      return new Response(new Uint8Array(2048).buffer, { status: 200, headers: { 'content-type': 'image/png' } })
+    }) as unknown as typeof fetch
+    const provider = buildProviderFromConfig(makeRow({ channel: 'image' }))
+    if (!provider || provider.capability !== 'image.shot') throw new Error('应构建图像 provider')
+    const result = await provider.execute({ prompt: 'p', size: '768x1344' }, ctx)
+    expect(result.base64.length).toBeGreaterThan(100)
+    expect(downloadHeaders?.Authorization).toBeUndefined() // 裸下载：不带 Bearer
+  })
+
+  it('图像：裸下载 401 → 带 Bearer 重试成功（部分网关需要鉴权下载）', async () => {
+    let downloadCalls = 0
+    const seenAuth: Array<string | undefined> = []
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/images/generations')) {
+        return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example.com/needs-auth.png' }] }), {
+          status: 200, headers: { 'content-type': 'application/json' },
+        })
+      }
+      downloadCalls++
+      const h = (init?.headers ?? {}) as Record<string, string>
+      seenAuth.push(h.Authorization)
+      if (downloadCalls === 1) {
+        return new Response('<?xml version="1.0"?><Error><Code>AccessDenied</Code></Error>', { status: 401 })
+      }
+      return new Response(new Uint8Array(2048).buffer, { status: 200, headers: { 'content-type': 'image/png' } })
+    }) as unknown as typeof fetch
+    const provider = buildProviderFromConfig(makeRow({ channel: 'image' }))
+    if (!provider || provider.capability !== 'image.shot') throw new Error('应构建图像 provider')
+    const result = await provider.execute({ prompt: 'p', size: '768x1344' }, ctx)
+    expect(result.base64.length).toBeGreaterThan(100)
+    expect(downloadCalls).toBe(2)
+    expect(seenAuth[0]).toBeUndefined()      // 第一次裸下载
+    expect(seenAuth[1]).toMatch(/^Bearer /) // 401 后带鉴权重试
+  })
+
+  it('视频协议 B（Agnes）：/video/submit 404 → POST /videos（keyframe/720P/aspect_ratio）→ 轮询 /agnesapi → 下载', async () => {
+    const calls: string[] = []
+    let agnesBody: Record<string, unknown> | null = null
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      calls.push(u)
+      if (u.endsWith('/video/submit')) {
+        return new Response(JSON.stringify({ error: { message: 'Invalid URL (POST /v1/video/submit)' } }), { status: 404, headers: { 'content-type': 'application/json' } })
+      }
+      if (u.endsWith('/videos') && init?.method === 'POST') {
+        agnesBody = JSON.parse(String(init.body))
+        return new Response(JSON.stringify({ video_id: 'vid-123', id: 'task-1' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (u.startsWith('https://api.example.com/agnesapi')) {
+        expect(u).toContain('video_id=vid-123')
+        expect(u).toContain('model_name=test-model')
+        return new Response(JSON.stringify({ status: 'completed', url: 'https://cdn.example.com/out.mp4' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response(new Uint8Array(65536).buffer, { status: 200, headers: { 'content-type': 'video/mp4' } })
+    }) as unknown as typeof fetch
+
+    const provider = buildProviderFromConfig(makeRow({ channel: 'video' }))
+    if (!provider || provider.capability !== 'video.shot') throw new Error('应构建视频 provider')
+    const result = await provider.execute(
+      { prompt: 'p', imageUrl: 'data:image/png;base64,xx', size: '720x1280', durationSec: 6 },
+      ctx,
+    )
+    expect(result.mime).toBe('video/mp4')
+    // 协议探测顺序：先 SiliconFlow（404）→ 转 Agnes
+    expect(calls[0]).toBe('https://api.example.com/v1/video/submit')
+    expect(calls[1]).toBe('https://api.example.com/v1/videos')
+    // Agnes 请求体形态（官方协议）
+    expect(agnesBody).toMatchObject({
+      mode: 'keyframe',
+      first_frame: 'data:image/png;base64,xx',
+      seconds: '6',
+      size: '720P',
+      aspect_ratio: '9:16',
+      model: 'test-model',
+    })
+    // 轮询在根路径 /agnesapi（非 /v1 下）
+    expect(calls[2]).toBe('https://api.example.com/agnesapi?video_id=vid-123&model_name=test-model')
+    expect(calls[3]).toBe('https://cdn.example.com/out.mp4')
+  })
+
+  it('视频协议 B：queue full → 退避重试后成功提交', async () => {
+    let submitCalls = 0
+    globalThis.fetch = vi.fn(async (url: string | URL, init?: RequestInit) => {
+      const u = String(url)
+      if (u.endsWith('/video/submit')) {
+        return new Response(JSON.stringify({ error: { message: 'Invalid URL' } }), { status: 404, headers: { 'content-type': 'application/json' } })
+      }
+      if (u.endsWith('/videos') && init?.method === 'POST') {
+        submitCalls++
+        if (submitCalls < 2) {
+          return new Response(JSON.stringify({ code: 'video_queue_full', message: 'video queue is full, please retry later' }), { status: 503, headers: { 'content-type': 'application/json' } })
+        }
+        return new Response(JSON.stringify({ video_id: 'vid-q' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      if (u.startsWith('https://api.example.com/agnesapi')) {
+        return new Response(JSON.stringify({ status: 'completed', url: 'https://cdn.example.com/q.mp4' }), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return new Response(new Uint8Array(65536).buffer, { status: 200, headers: { 'content-type': 'video/mp4' } })
+    }) as unknown as typeof fetch
+
+    const provider = buildProviderFromConfig(makeRow({ channel: 'video' }))
+    if (!provider || provider.capability !== 'video.shot') throw new Error('应构建视频 provider')
+    const result = await provider.execute({ prompt: 'p', imageUrl: 'data:image/png;base64,xx' }, ctx)
+    expect(result.mime).toBe('video/mp4')
+    expect(submitCalls).toBe(2) // 第一次 queue full，第二次成功
+  })
 })
 
 describe('模型列表拉取 fetchAvailableModels（mock fetch）', () => {

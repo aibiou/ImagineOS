@@ -1,7 +1,7 @@
 // OpenAI 兼容接口 Provider Adapter（ADR-0004 / M1.5 Phase B 解锁）
 // 由「设置 → 模型服务」的配置行工厂化生成，插入 Model Router 候选链（自定义优先 → z-ai 兜底）。
 // 覆盖能力：text.plan（chat/completions）/ image.shot（images/generations）
-//          / audio.tts（audio/speech）/ video.shot（video/submit + video/status，实验性）
+//          / audio.tts（audio/speech）/ video.shot（双协议：SiliconFlow submit/status + Agnes OpenAI-Videos）
 // 纯 fetch 实现——不引入任何 SDK 依赖，密钥只在请求头出现。
 
 import {
@@ -100,6 +100,42 @@ function extractJsonError(json: unknown): string | null {
   return null
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/**
+ * 媒体下载（图像/视频产物）：先裸下载（S3 预签名 URL 等自证链接，附加 Authorization 头会破坏签名
+ * —— Agnes 实测：带鉴权头 → 401 XML 报错），401/403 时再带 Bearer 重试（部分网关需要）。
+ */
+async function downloadMedia(url: string, apiKey: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string }> {
+  let lastError = '未知错误'
+  for (const withAuth of [false, true]) {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), timeoutMs)
+    try {
+      const res = await fetch(url, {
+        headers: withAuth ? { Authorization: `Bearer ${apiKey}` } : {},
+        signal: controller.signal,
+      })
+      if (res.ok) {
+        const contentType = res.headers.get('content-type') ?? ''
+        const bytes = Buffer.from(await res.arrayBuffer())
+        return { bytes, contentType }
+      }
+      lastError = `HTTP ${res.status}`
+      // 仅 401/403 值得带鉴权重试；其他状态码直接返回错误
+      if (res.status !== 401 && res.status !== 403) break
+    } catch (e) {
+      lastError = e instanceof Error ? e.message : String(e)
+      if (lastError.includes('abort')) lastError = `超时（>${timeoutMs}ms）`
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  throw new Error(`下载失败（${lastError}）`)
+}
+
 // ---------- text.plan（chat/completions） ----------
 
 function extractContent(raw: unknown): string {
@@ -184,10 +220,13 @@ function makeImageProvider(row: ProviderConfigRow): ImageShotProvider {
       }
       const url = entry?.url
       if (typeof url === 'string' && /^https?:\/\//.test(url)) {
-        // URL 形态 → 下载转 base64
-        const dl = await request('GET', url, row.apiKey, undefined, 120_000)
-        if (!dl.ok || !dl.bytes) throw new Error(`[自定义图像 ${row.label}] 生成成功但下载失败：${dl.error}`)
-        return { base64: dl.bytes.toString('base64'), mime: dl.contentType.includes('jpeg') ? 'image/jpeg' : 'image/png' }
+        // URL 形态 → 下载转 base64（预签名 URL 不能带鉴权头，见 downloadMedia 注释）
+        try {
+          const dl = await downloadMedia(url, row.apiKey, 120_000)
+          return { base64: dl.bytes.toString('base64'), mime: dl.contentType.includes('jpeg') ? 'image/jpeg' : 'image/png' }
+        } catch (e) {
+          throw new Error(`[自定义图像 ${row.label}] 生成成功但下载失败：${e instanceof Error ? e.message : String(e)}`)
+        }
       }
       throw new Error(`[自定义图像 ${row.label}] 返回中未找到图像（b64_json/base64/url 均缺失）`)
     },
@@ -232,7 +271,7 @@ function makeTtsProvider(row: ProviderConfigRow): AudioTTSProvider {
   }
 }
 
-// ---------- video.shot（video/submit + video/status 轮询，实验性） ----------
+// ---------- video.shot（双协议：SiliconFlow submit/status + Agnes OpenAI-Videos） ----------
 
 const VIDEO_POLL_INTERVAL_MS = 5_000
 const VIDEO_POLL_MAX_ATTEMPTS = 60 // 5s × 60 = 5min 上限（与能力级超时 330s 匹配）
@@ -252,6 +291,116 @@ interface VideoStatusResponse {
   error?: unknown
 }
 
+// ---- 协议 B：Agnes OpenAI-Videos（POST /videos + GET {origin}/agnesapi） ----
+// 官方文档（wiki.agnes-ai.com/en/docs/agnes-video-25-flash.md）：
+//   提交：POST /v1/videos { model, prompt, mode: 'keyframe', first_frame, seconds: '4'-'12', size: '720P', aspect_ratio }
+//   轮询：GET {origin}/agnesapi?video_id=…&model_name=…（注意在根路径，非 /v1 下）→ status/url
+//   首帧：公网 URL 或 data URI（实测 data URI 通过；图片边长须 256-5760）
+//   Flash 限制：size 只接受 '720P'，输出分辨率由 aspect_ratio 决定
+
+const AGNES_POLL_INTERVAL_MS = 3_000
+const AGNES_POLL_MAX_ATTEMPTS = 80 // 3s × 80 = 4min 轮询上限（提交重试 40s 余量 → 能力级 330s 内）
+const AGNES_QUEUE_RETRIES = 3
+const AGNES_QUEUE_BACKOFF_MS = 20_000
+
+interface AgnesVideoStatus {
+  status?: string
+  url?: string
+  error?: unknown
+  message?: string
+  progress?: number
+}
+
+/** payload.size（如 '720x1280'）→ Agnes aspect_ratio（最近似匹配） */
+function agnesAspectRatio(size?: string): string {
+  if (!size) return '9:16'
+  const m = size.match(/^(\d+)x(\d+)$/)
+  if (!m) return '9:16'
+  const ratio = Number(m[1]) / Number(m[2])
+  const table: Array<[string, number]> = [
+    ['21:9', 21 / 9], ['16:9', 16 / 9], ['4:3', 4 / 3], ['1:1', 1], ['3:4', 3 / 4], ['9:16', 9 / 16],
+  ]
+  let best = '9:16'
+  let bestDiff = Infinity
+  for (const [ar, v] of table) {
+    const diff = Math.abs(ratio - v)
+    if (diff < bestDiff) { bestDiff = diff; best = ar }
+  }
+  return best
+}
+
+/** durationSec → seconds 字符串（4-12 夹取，Agnes 只接受字符串） */
+function agnesSeconds(durationSec?: number): string {
+  const n = Math.round(durationSec ?? 5)
+  return String(Math.min(12, Math.max(4, n)))
+}
+
+interface AgnesSubmitResponse {
+  video_id?: string
+  id?: string
+  task_id?: string
+}
+
+async function executeVideoAgnes(
+  row: ProviderConfigRow,
+  payload: VideoShotPayload,
+  extraBody: Record<string, unknown>,
+): Promise<VideoShotResult> {
+  const body: Record<string, unknown> = {
+    model: row.modelName,
+    mode: 'keyframe',
+    prompt: payload.prompt,
+    first_frame: payload.imageUrl,
+    seconds: agnesSeconds(payload.durationSec),
+    size: '720P',
+    aspect_ratio: agnesAspectRatio(payload.size),
+    ...extraBody,
+  }
+
+  // 1. 提交（video_queue_full → 退避重试）
+  let submitJson: AgnesSubmitResponse | null = null
+  let lastError = ''
+  for (let attempt = 1; attempt <= AGNES_QUEUE_RETRIES; attempt++) {
+    const out = await request('POST', joinUrl(row.baseUrl, '/videos'), row.apiKey, body, 60_000)
+    if (out.ok) { submitJson = out.json as AgnesSubmitResponse; break }
+    lastError = out.error ?? extractJsonError(out.json) ?? '请求失败'
+    if (/queue[_ ]?full/i.test(lastError) && attempt < AGNES_QUEUE_RETRIES) {
+      await sleep(AGNES_QUEUE_BACKOFF_MS)
+      continue
+    }
+    throw new Error(`[自定义视频 ${row.label}] 提交失败：${lastError}`)
+  }
+  const videoId = submitJson?.video_id ?? submitJson?.id ?? submitJson?.task_id
+  if (!videoId) throw new Error(`[自定义视频 ${row.label}] 提交成功但未返回 video_id（协议形态可能变化）`)
+
+  // 2. 轮询（GET {origin}/agnesapi?video_id=…&model_name=…）
+  let origin = ''
+  try { origin = new URL(row.baseUrl).origin } catch { origin = row.baseUrl.replace(/\/v1\/?$/, '') }
+  const pollUrl = `${origin}/agnesapi?video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(row.modelName)}`
+  for (let attempt = 1; attempt <= AGNES_POLL_MAX_ATTEMPTS; attempt++) {
+    await sleep(AGNES_POLL_INTERVAL_MS)
+    const status = await request('GET', pollUrl, row.apiKey, undefined, 30_000)
+    if (!status.ok) continue // 瞬时失败继续轮询
+    const sj = status.json as AgnesVideoStatus | null
+    const s = (sj?.status ?? '').toUpperCase()
+    if (s === 'COMPLETED' || s === 'SUCCEEDED' || s === 'SUCCESS') {
+      const videoUrl = sj?.url
+      if (typeof videoUrl !== 'string' || !/^https?:\/\//.test(videoUrl)) {
+        throw new Error(`[自定义视频 ${row.label}] 状态成功但未返回视频地址`)
+      }
+      const dl = await downloadMedia(videoUrl, row.apiKey, 240_000)
+      if (dl.bytes.length < 10_000) throw new Error(`[自定义视频 ${row.label}] 视频内容过短（${dl.bytes.length} 字节）`)
+      return { base64: dl.bytes.toString('base64'), mime: 'video/mp4' }
+    }
+    if (s === 'FAILED' || s === 'ERROR' || s === 'CANCELED') {
+      const errMsg = extractJsonError(sj) ?? sj?.message ?? (typeof sj?.error === 'string' ? sj.error : JSON.stringify(sj).slice(0, 200))
+      throw new Error(`[自定义视频 ${row.label}] 生成失败：${errMsg}`)
+    }
+    // RUNNING / PENDING / QUEUED / 空 → 继续轮询
+  }
+  throw new Error(`[自定义视频 ${row.label}] 轮询超时（>${AGNES_POLL_MAX_ATTEMPTS * AGNES_POLL_INTERVAL_MS / 1000}s）`)
+}
+
 function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
   const extra = parseExtra(row)
   const extraBody = (extra.body ?? {}) as Record<string, unknown>
@@ -260,7 +409,7 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
     capability: 'video.shot',
     model: row.modelName,
     async execute(payload: VideoShotPayload, _ctx: ProviderCallContext): Promise<VideoShotResult> {
-      // 1. 提交任务（图生视频：首帧 + 运动提示）
+      // 协议 A：SiliconFlow 风格 POST /video/submit（404 = 该服务商不支持 → 转协议 B）
       const submitBody: Record<string, unknown> = {
         model: row.modelName,
         prompt: payload.prompt,
@@ -270,6 +419,9 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
         ...extraBody,
       }
       const submit = await request('POST', joinUrl(row.baseUrl, '/video/submit'), row.apiKey, submitBody, 60_000)
+      if (submit.status === 404) {
+        return executeVideoAgnes(row, payload, extraBody)
+      }
       if (!submit.ok) throw new Error(`[自定义视频 ${row.label}] 提交失败：${submit.error ?? extractJsonError(submit.json) ?? '请求失败'}`)
       const requestId =
         (submit.json as VideoSubmitResponse | null)?.requestId ??
@@ -280,7 +432,7 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
 
       // 2. 轮询状态
       for (let attempt = 1; attempt <= VIDEO_POLL_MAX_ATTEMPTS; attempt++) {
-        await new Promise((r) => setTimeout(r, VIDEO_POLL_INTERVAL_MS))
+        await sleep(VIDEO_POLL_INTERVAL_MS)
         const status = await request(
           'GET',
           `${joinUrl(row.baseUrl, '/video/status')}?requestId=${encodeURIComponent(requestId)}`,
@@ -296,8 +448,7 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
           if (typeof videoUrl !== 'string' || !/^https?:\/\//.test(videoUrl)) {
             throw new Error(`[自定义视频 ${row.label}] 状态成功但未返回视频地址`)
           }
-          const dl = await request('GET', videoUrl, row.apiKey, undefined, 240_000)
-          if (!dl.ok || !dl.bytes) throw new Error(`[自定义视频 ${row.label}] 视频下载失败：${dl.error}`)
+          const dl = await downloadMedia(videoUrl, row.apiKey, 240_000)
           if (dl.bytes.length < 10_000) throw new Error(`[自定义视频 ${row.label}] 视频内容过短（${dl.bytes.length} 字节）`)
           return { base64: dl.bytes.toString('base64'), mime: 'video/mp4' }
         }
