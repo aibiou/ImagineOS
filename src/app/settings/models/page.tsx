@@ -96,16 +96,16 @@ function ChainPreview({ rows, builtin }: { rows: ConfigRow[]; builtin: string })
   const active = rows.filter((r) => r.enabled)
   if (active.length === 0) {
     return (
-      <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
-        <span className="text-zinc-500">当前调用：</span>
+      <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-300">
+        <span className="text-zinc-400">当前调用：</span>
         <Badge variant="secondary" className="text-[11px]">{builtin}</Badge>
-        <span className="text-zinc-500">（未配置自定义服务）</span>
+        <span className="text-zinc-400">（未配置自定义服务）</span>
       </div>
     )
   }
   return (
-    <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-400">
-      <span className="text-zinc-500">当前调用顺序：</span>
+    <div className="flex flex-wrap items-center gap-1.5 text-xs text-zinc-300">
+      <span className="text-zinc-400">当前调用顺序：</span>
       {active.map((r, i) => (
         <span key={r.id} className="flex items-center gap-1.5">
           {i > 0 ? <span className="text-zinc-600">→</span> : null}
@@ -132,6 +132,9 @@ interface FormState {
 }
 
 const EMPTY_FORM: FormState = { label: '', baseUrl: '', apiKey: '', modelName: '', priority: '10', extraJson: '' }
+
+// 高对比输入框（暗色实底 + 清晰边框；! 确保覆盖组件默认令牌）
+const INPUT_CLS = 'border-white/25! bg-black/40! text-zinc-100!'
 
 function ProviderForm({
   mode,
@@ -203,8 +206,8 @@ function ProviderForm({
   return (
     <div className={`space-y-3 rounded-xl border p-4 ${editing ? 'border-violet-500/25 bg-zinc-900/80' : 'border-violet-500/25 bg-zinc-900/80'}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-zinc-200">{editing ? '编辑服务' : '添加自定义服务'}</span>
-        <span className="text-xs text-zinc-500">{editing ? '修改后保存即生效（密钥留空 = 保持不变）' : '选一个服务商可自动填充地址与模型名'}</span>
+        <span className="text-sm font-medium text-zinc-100">{editing ? '编辑服务' : '添加自定义服务'}</span>
+        <span className="text-xs text-zinc-400">{editing ? '修改后保存即生效（密钥留空 = 保持不变）' : '选一个服务商可自动填充地址与模型名'}</span>
       </div>
       <div className="flex flex-wrap gap-2">
         {presets.map((p) => (
@@ -221,36 +224,37 @@ function ProviderForm({
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor={`label-${mode}-${channelKey}`}>显示名</Label>
-          <Input id={`label-${mode}-${channelKey}`} value={form.label} placeholder="如：DeepSeek 对话" onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
+          <Input id={`label-${mode}-${channelKey}`} className={INPUT_CLS} value={form.label} placeholder="如：DeepSeek 对话" onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor={`model-${mode}-${channelKey}`}>模型名称（Model Name）</Label>
-          <Input id={`model-${mode}-${channelKey}`} value={form.modelName} placeholder="如 deepseek-chat" onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))} />
+          <Input id={`model-${mode}-${channelKey}`} className={INPUT_CLS} value={form.modelName} placeholder="如 deepseek-chat" onChange={(e) => setForm((f) => ({ ...f, modelName: e.target.value }))} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor={`base-${mode}-${channelKey}`}>接口地址（Endpoint）</Label>
-          <Input id={`base-${mode}-${channelKey}`} value={form.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))} />
+          <Input id={`base-${mode}-${channelKey}`} className={INPUT_CLS} value={form.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))} />
         </div>
         <div className="space-y-1.5 sm:col-span-2">
           <Label htmlFor={`key-${mode}-${channelKey}`}>密钥（API Key）</Label>
           <Input
             id={`key-${mode}-${channelKey}`}
+            className={INPUT_CLS}
             type="password"
             value={form.apiKey}
             placeholder={editing ? '留空 = 保持原密钥不变；输入新值则覆盖' : '仅保存在本机沙箱数据库，页面显示时打码'}
             onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
           />
           {editing && initial?.apiKey ? (
-            <p className="text-[11px] text-zinc-500">当前密钥：<span className="font-mono">{initial.apiKey}</span>（前3后4，中间打码）</p>
+            <p className="text-[11px] text-zinc-400">当前密钥：<span className="font-mono text-zinc-300">{initial.apiKey}</span>（前3后4，中间打码）</p>
           ) : null}
         </div>
         <div className="space-y-1.5">
           <Label htmlFor={`prio-${mode}-${channelKey}`}>优先级（数字越小越先用）</Label>
-          <Input id={`prio-${mode}-${channelKey}`} type="number" min={1} max={999} value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))} />
+          <Input id={`prio-${mode}-${channelKey}`} className={INPUT_CLS} type="number" min={1} max={999} value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))} />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor={`extra-${mode}-${channelKey}`}>附加参数（JSON，可选）</Label>
-          <Input id={`extra-${mode}-${channelKey}`} value={form.extraJson} placeholder='如 {"voice":"alloy"}' onChange={(e) => setForm((f) => ({ ...f, extraJson: e.target.value }))} />
+          <Input id={`extra-${mode}-${channelKey}`} className={INPUT_CLS} value={form.extraJson} placeholder='如 {"voice":"alloy"}' onChange={(e) => setForm((f) => ({ ...f, extraJson: e.target.value }))} />
         </div>
       </div>
       {error ? <div className="rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{error}</div> : null}
@@ -325,18 +329,30 @@ function ConfigCard({
           </Button>
         </div>
       </div>
-      <div className="grid gap-1.5 text-xs text-zinc-400">
-        <div className="flex gap-2"><span className="w-16 shrink-0 text-zinc-500">模型</span><span className="text-zinc-200">{row.modelName}</span></div>
-        <div className="flex gap-2"><span className="w-16 shrink-0 text-zinc-500">接口地址</span><span className="break-all">{row.baseUrl}</span></div>
-        <div className="flex gap-2"><span className="w-16 shrink-0 text-zinc-500">密钥</span><span className="font-mono">{row.apiKey}</span></div>
+      <div className="divide-y divide-white/5 overflow-hidden rounded-lg border border-white/10 bg-black/40">
+        <div className="flex gap-3 px-3 py-2 text-sm">
+          <span className="w-[4.5rem] shrink-0 text-zinc-400">模型</span>
+          <span className="min-w-0 break-all font-mono font-medium text-zinc-100">{row.modelName}</span>
+        </div>
+        <div className="flex gap-3 px-3 py-2 text-sm">
+          <span className="w-[4.5rem] shrink-0 text-zinc-400">接口地址</span>
+          <span className="min-w-0 break-all font-mono text-zinc-100">{row.baseUrl}</span>
+        </div>
+        <div className="flex gap-3 px-3 py-2 text-sm">
+          <span className="w-[4.5rem] shrink-0 text-zinc-400">密钥</span>
+          <span className="min-w-0 break-all font-mono text-zinc-100">{row.apiKey}</span>
+        </div>
         {row.extraJson ? (
-          <div className="flex gap-2"><span className="w-16 shrink-0 text-zinc-500">附加参数</span><span className="font-mono break-all">{row.extraJson}</span></div>
+          <div className="flex gap-3 px-3 py-2 text-sm">
+            <span className="w-[4.5rem] shrink-0 text-zinc-400">附加参数</span>
+            <span className="min-w-0 break-all font-mono text-zinc-100">{row.extraJson}</span>
+          </div>
         ) : null}
-        {testResult ? <div className="pt-1 text-zinc-300">{testResult}</div> : row.lastTestMessage ? <div className="pt-1">{row.lastTestMessage}</div> : null}
       </div>
+      {testResult ? <div className="text-xs text-zinc-300">{testResult}</div> : row.lastTestMessage ? <div className="text-xs text-zinc-300">{row.lastTestMessage}</div> : null}
       <div className="flex items-center gap-3 pt-1">
         <Switch checked={row.enabled} onCheckedChange={() => onToggle(row)} aria-label="启用/停用" />
-        <span className="text-xs text-zinc-400">参与生成任务的候选链（失败自动切换到下一个）</span>
+        <span className="text-xs text-zinc-300">参与生成任务的候选链（失败自动切换到下一个）</span>
       </div>
     </div>
   )
@@ -417,7 +433,7 @@ export default function ModelSettingsPage() {
   const configuredCount = useMemo(() => items.length, [items])
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-zinc-100">
+    <main className="dark min-h-screen bg-zinc-950 text-zinc-100">
       <header className="sticky top-0 z-40 border-b border-white/5 bg-zinc-950/80 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-4xl items-center gap-3 px-4 sm:px-6">
           <Link href="/" className="rounded-lg p-2 transition hover:bg-white/5" aria-label="返回首页">
@@ -430,7 +446,7 @@ export default function ModelSettingsPage() {
               <Badge className="bg-violet-500/15 text-violet-300 border-violet-500/30 hover:bg-violet-500/15">已配置 {configuredCount} 项</Badge>
             ) : null}
           </div>
-          <div className="ml-auto hidden text-xs text-zinc-500 sm:block">自定义优先 · 内置兜底 · 失败自动切换</div>
+          <div className="ml-auto hidden text-xs text-zinc-400 sm:block">自定义优先 · 内置兜底 · 失败自动切换</div>
         </div>
       </header>
 
@@ -441,7 +457,7 @@ export default function ModelSettingsPage() {
             在这里接入任何 OpenAI 兼容的模型服务（OpenAI、DeepSeek、SiliconFlow、Moonshot、智谱等）。
             配置保存后，创作任务会按优先级依次尝试：自定义服务在前，内置服务兜底——任何一家失败或限流，自动切换到下一家，不打断你的创作。
           </p>
-          <div className="mt-4 grid gap-2 text-xs text-zinc-400 sm:grid-cols-3">
+          <div className="mt-4 grid gap-2 text-xs text-zinc-300 sm:grid-cols-3">
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">1</span>
               <span>点「添加自定义服务」，选服务商一键填充地址与模型名</span>
@@ -455,14 +471,14 @@ export default function ModelSettingsPage() {
               <span>点「连接测试」确认可用，然后正常去创作</span>
             </div>
           </div>
-          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-500">
+          <p className="mt-3 flex items-center gap-1.5 text-[11px] text-zinc-400">
             <ShieldCheck className="size-3.5" aria-hidden />
             密钥只保存在本机沙箱数据库，页面显示时打码（前 3 后 4）；随时可编辑或删除。
           </p>
         </section>
 
         {loading ? (
-          <div className="flex items-center justify-center py-20 text-zinc-500"><Loader2 className="size-6 animate-spin" /></div>
+          <div className="flex items-center justify-center py-20 text-zinc-400"><Loader2 className="size-6 animate-spin" /></div>
         ) : (
           CHANNELS.map((ch) => {
             const rows = items.filter((i) => i.channel === ch.key)
@@ -484,7 +500,7 @@ export default function ModelSettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   {rows.length === 0 ? (
-                    <div className="rounded-lg border border-dashed border-white/10 px-4 py-6 text-center text-xs text-zinc-500">
+                    <div className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-xs text-zinc-400">
                       这条通道还没有自定义服务——点击下方按钮，把你的 API Key 填进来即可接管；不配置则继续使用内置服务。
                     </div>
                   ) : (
