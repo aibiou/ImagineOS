@@ -229,3 +229,21 @@ Stage Summary:
 - 「看不清自定义的配置」四大缺陷全部修复：可编辑、可见生效链、有引导、入口显眼
 - 配置闭环补齐最后一环：添加 → 测试 → 编辑修正 → 启停 → 删除 全生命周期可操作
 - 等待产品负责人在 /settings/models 配置真实外部服务（OpenAI/DeepSeek/SiliconFlow/Moonshot/智谱 任一家的 API Key）→ 立即触发 finish-m15.mjs 补跑 Phase B
+
+---
+Task ID: multi-provider-003
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 字段对比度修复（产品负责人反馈：「看不清模型的各个字段，和背景颜色冲突了」）
+
+Work Log:
+- 根因定位（非猜测，计算样式实证）：/settings/models 根元素缺 `dark` 类（首页有）→ 所有 shadcn 组件落入亮色主题令牌：Input 渲染浅灰边框（--input=oklch 0.922 亮灰）、Switch 开启态 = 亮色 primary（近黑）在暗背景上不可见、字段文字 zinc-400/500 直接压在 zinc-900 卡片上（标签仅 ~2.3:1）
+- 系统修复（274f99a）：① 根元素加 dark 类——全组件切正确暗色令牌 ② 只读字段区重构为内嵌面板（bg-black/40 + divide-y 分行 + border-white/10）：标签 zinc-400、值 zinc-100 等宽字体 text-sm（12px→14px）③ 表单输入框 border-white/25! bg-black/40! text-zinc-100!（! 后缀确保覆盖 dark:bg-input/30 令牌）④ 全部 zinc-500 辅助文字提亮至 zinc-400/300
+- 客观验证（VLM 通道仍 429，改用像素级测量代替主观判断）：scripts/verify-panel-contrast.py 按元素 getBoundingClientRect 精确裁剪面板区域——WCAG 对比度 13.8:1（AAA 级；文字 217/255 vs 背景 13/255）；Switch 开启态 lab L≈91 近白可见；Input 计算样式 = 白 25% 边框 + 黑 40% 实底
+- E2E 复验：预置填充→保存→面板渲染→清理全链通过；刷新后零 console 错误；48/48 测试绿
+- 过程缺陷记录：MultiEdit 在本环境为顺序应用非原子（第一次调用部分落地后报错），已逐项 grep 核实落地状态并补齐缺失编辑——后续使用需逐编辑验证
+- 提交推送：274f99a → GitHub main
+
+Stage Summary:
+- 「字段和背景冲突」根因（暗色页面漏挂 dark 类）+ 表现层（低对比文字）双修复，像素级证据 AAA 13.8:1
+- 设置页对比度体系：字段面板 13.8:1 / 辅助文字 ≥7:1 / 输入框实底清晰边界
+- 继续等待产品负责人配置真实 API Key → 触发 Phase B 补跑
