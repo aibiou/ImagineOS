@@ -22,6 +22,7 @@ import {
   MessageCircleQuestion,
   PenLine,
   Play,
+  PlugZap,
   Rocket,
   Sparkles,
   Wand2,
@@ -289,10 +290,17 @@ export default function Home() {
             </div>
           </div>
           <nav className="flex items-center gap-1 text-sm text-zinc-300" aria-label="主导航">
-            <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#imagine">创造</a>
-            <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#mine">我的创作</a>
-            <a className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="#explore">探索</a>
-            <Link className="rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white" href="/settings/models">模型服务</Link>
+            <a className="hidden rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white sm:inline-flex" href="#imagine">创造</a>
+            <a className="hidden rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white sm:inline-flex" href="#mine">我的创作</a>
+            <a className="hidden rounded-lg px-3 py-2 transition hover:bg-white/5 hover:text-white sm:inline-flex" href="#explore">探索</a>
+            <Link
+              className="ml-1 flex items-center gap-1.5 rounded-lg border border-violet-500/40 bg-violet-500/10 px-3 py-2 text-violet-300 transition hover:border-violet-400 hover:bg-violet-500/20 hover:text-violet-200"
+              href="/settings/models"
+              title="配置你自己的模型服务（API Key）"
+            >
+              <PlugZap className="size-4" aria-hidden />
+              模型服务
+            </Link>
           </nav>
         </div>
       </header>
