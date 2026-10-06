@@ -209,3 +209,23 @@ Stage Summary:
 - 「不因单一模型 quota 限制阻塞 ImagineOS」已在架构层落地：任何 OpenAI 兼容服务的密钥即可解锁全部被阻塞评测
 - 密钥明文落库为 Alpha 单租户取舍（ADR-0004 已登记风险与后续路径）
 - 下一步：产品负责人在 /settings/models 配置任一外部服务（或提供密钥由本 agent 配置）→ 立即执行 finish-m15.mjs 完成 Phase B（p10/Gate3/Gate4/Native Golden Case）
+
+---
+Task ID: multi-provider-002
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 模型自定义配置 UX 清晰度增强（产品负责人反馈：「现在看不清自定义的配置」——定位为四大缺陷并全部修复）
+
+Work Log:
+- 摸底核实：multi-provider-001 功能层已完整提交（e3414f5）、dev server 存活、预览 URL 200、API 五端点全通（含 [id]/test 连接测试）——确认问题不在功能缺失而在可见性/可操作性
+- 缺陷定位：① 配置保存后无编辑入口（改模型/密钥只能删除重建）② 通道卡片看不到当前实际生效的候选链 ③ 空状态引导弱（四个同款空卡片无行动指引）④ 首页入口为小文字链接不显眼
+- 重写 /settings/models（6f028c7）：统一 ProviderForm 组件（新增/编辑双模式，编辑时密钥留空=保持不变+当前密钥打码提示）；ConfigCard 内联编辑；ChainPreview 生效链可视化（启用项按 priority 升序 → 内置兜底徽章）；顶部三步引导（选服务商一键填充→粘贴 API Key→连接测试）；密钥安全说明（ShieldCheck 前3后4打码）；通道头「N/M 启用」徽章；header「已配置 N 项」计数
+- 首页入口增强：导航「模型服务」→ violet 描边高亮按钮 + PlugZap 图标 + title 提示；移动端隐藏锚链接防 header 溢出（模型服务按钮保留全断点）
+- 后端零改动（PATCH 掩码哨兵/字段校验/测试状态重置本就齐备）——纯前端增强
+- 门禁：typecheck ✓ / lint ✓ / vitest 48/48 ✓
+- 浏览器 E2E 全链实测：添加（DeepSeek 预置一键填充 label/model/endpoint）→ 保存 → 卡片生成（打码 sk-••••3456）→ 编辑（改 model deepseek-chat→deepseek-reasoner，密钥留空后 PATCH 验证 apiKey 原值未动）→ 启停开关（DB enabled true→false→true）→ DELETE 清理回归空列表；console 零错误；桌面+移动截图存档（settings-models-with-config / settings-models-mobile / home-nav-mobile）
+- 提交推送：6f028c7 → GitHub main（远端一致）
+
+Stage Summary:
+- 「看不清自定义的配置」四大缺陷全部修复：可编辑、可见生效链、有引导、入口显眼
+- 配置闭环补齐最后一环：添加 → 测试 → 编辑修正 → 启停 → 删除 全生命周期可操作
+- 等待产品负责人在 /settings/models 配置真实外部服务（OpenAI/DeepSeek/SiliconFlow/Moonshot/智谱 任一家的 API Key）→ 立即触发 finish-m15.mjs 补跑 Phase B
