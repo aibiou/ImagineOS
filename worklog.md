@@ -309,3 +309,23 @@ Stage Summary:
 - 指令全部落地：模型配置链路上 session 已验证（非 UI 摆设）→ Phase B 四项补跑完成（Native Golden 为诚实混合形态）→ 10/10 报告 Provider 信息齐备 → Final Decision Report 收口 → M2 启动唯一剩余条件 = Gate 7 真人测试
 - 真实性原则执行：评估标准零修改；失败/回落/恢复全程入档（TTS 二次 429、agnes 6 连败降级、28 次视频尝试 1 成功、3 个脚本缺陷+修复）
 - 环境新知：沙箱存在针对后台 node/bash 进程的 SIGKILL（dev server 豁免）——长编排必须前台分块执行
+
+---
+Task ID: m15-final-validation-001
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令——M1.5 Phase B 已收口，进入 M1.5 Final Validation：Gate 7 真人测试准备（四项确认）+ Final Package（Decision Report 终版/Provider Matrix/Known Limitations/Demo Case 清单）+ 不进入 M2 开发（等待 Gate 7 数据）
+
+Work Log:
+- 状态接管：git 核实 3704808（Phase B 收口）本地与远端一致；dev server 存活（home/explore 200）；预览 URL 200；10 份评估报告齐备
+- 演示数据提取：新增 scripts/m15/demo-case-inventory.mjs（修复 remixSources 关系名 + mime 查询两个装置缺陷）——DB 实时提取 21 件已发布作品（18 真实案例 + 3「发布走查」夹具），含版本链/Remix 血缘/native 记账/时长
+- Gate 7 四项确认（human-test-plan.md → Final Validation 锁定版）：① 测试流程 §3 + §10 测试日 pre-flight 清单（provider 探测/模式决定/导出预演/种子隔离/中止条件）② 用户任务模板 §3.0 观察员逐字稿卡（开场/应变/卡住 ≥3min·≥5min 三级预案/修订/探索/收尾逐字稿 + 禁止词清单 + 「观察员只做三件事」）③ 数据采集字段 §5.1 人工×系统对齐表（8 个测量对象与 export-human-test.mjs 字段一一对应 + 冲突裁决规则）④ 评分标准 §4 编码细则（首反应正/中/负判定例、双人编码一致率 ≥80%、Intent 确认项口径、修订五类别编码、评分标准不随 Provider 变更修改）
+- M1.5 Final Package（m15-final-package.md 新建，196 行）：§0 包清单与状态（6 组件）；§1 Decision Report 速览（Q1–Q7 一句话结论表）；§2 Provider Matrix 终版（三段执行配置矩阵/链路 fallback A 级证据/定价/协议缺陷工程记录/单一依赖风险——TTS 为唯一无自定义备份通道）；§3 Known Limitations L1–L16（产品级 5/工程级 6/数据证据级 3/环境级 2，每条含量化事实与对策）；§4 Demo Case 清单（五分钟标准动线 + 类型广度组 10 案例 + 专项演示组 3 件真实字节案例 + 占位媒体诚实披露 + 配额风险控制）；§5 M2 冻结声明（不进入 M2 开发、允许例外 3 项、M2 规划唯一输入 = Gate 7 数据、冻结清单继续有效）
+- 索引同步：decision-report 头部 Final Package 收录标记；evaluations README 包地图置顶；主报告 §11 交付物清单新增第 11 行
+- 门禁：typecheck ✓ / lint ✓ / vitest 64/64 ✓（src/ 零改动，纯文档 + 1 提取脚本）
+- 提交推送：e4b9fa5 → GitHub main（本地与远端一致）
+
+Stage Summary:
+- 指令全部落地：Gate 7 真人测试准备四项确认锁定（流程/任务模板/采集字段/评分标准）+ M1.5 Final Package 五组件齐备（Decision Report 终版/Provider Matrix/Known Limitations/Demo Case 清单/M2 冻结声明）
+- 不进入 M2 开发已写入 Final Package §5 生效：M2 规划唯一输入 = Gate 7 真人测试数据（Expression Success 率 +「我还想做一个」行为率），由产品负责人确认后启动
+- 演示体系带诚实披露：21 件发布作品中 p10/G3/G4/Native 四件为重置后真实字节（现场演示首选）；p01–p09 与 M1 种子为占位恢复（结构与时长精确，演示真实质量时不用）；3 件夹具排除
+- 下一步（人工阶段）：产品负责人按 human-test-plan.md §10 pre-flight 清单开场执行 Gate 7（目标 16 人起步 10 人）→ 测试后 node scripts/m15/export-human-test.mjs 导出 + integrity-check 批量复核 → 填充 m15-human-test-report.md → M2 范围决策（§6 决策矩阵）
