@@ -105,3 +105,22 @@ Stage Summary:
 - 关键结论4：瓶颈排序：AI 生成质量 > 内容传播 > Intent 理解 ≈ Revision > UX
 - 产物：docs/evaluations/m15-expression-quality-report.md + human-test-plan.md + docs/product/{vision,product-constitution,product-blueprint,alpha-prd,user-language-rules,m15-task-tree}.md + docs/architecture/{architecture,content-object,ai-model-layer,trust}.md + docs/worklog/README.md + scripts/m15/*（9 个脚本）+ src/ai/providers/zai-video.ts + tests/video-shot-router.test.ts
 - 下一步：配额恢复后补跑 Gate3/4 + p10 + Native Golden Case（~30 分钟）→ 报告 §3/§4/§10 更新 → 等待产品负责人确认 M2 范围（不自动进入 M2）
+
+---
+Task ID: sandbox-restore-001
+Agent: GLM-5.3（主 agent）
+Task: 沙箱重置事故恢复——预览不可用（用户报障「预览页面打不开」），全链路诊断与 M1.5 运行时恢复
+
+Work Log:
+- 诊断：沙箱于 2026-10-06 09:03 重置（boot-timeline 证实），M0-M1.5 全部运行时丢失——dev server 进程死亡、src/prisma/node_modules/db/storage 清空，仅 Phase 0-2 文档、git 零头提交与 worklog 幸存；预览 URL 因 :3000 无监听而 502
+- 定位恢复源：/tmp/my-project 完整快照（05:41 生成）——含全部 M1.5 源码、prisma/schema+seed、db/custom.db（44 内容/40 版本/208 资产/15 发布/8 Remix）、M1.5 全套文档、scripts/m15；本地 git 对象库仅 35 objects（无代码提交），GitHub remote 未在幸存文件中记录 URL
+- 恢复执行：cp -a 快照合并（保留 .git/skills/upload）→ bun install（861 包）→ prisma generate → 首页 200 / explore API 15 作品 / 数据完好验证
+- 媒体恢复：storage/ 未随快照幸存且 AI 三通道（LLM/图像/TTS）全部 429 冷却（冒烟实测）→ 编写 scripts/restore-media.ts 以本地 FFmpeg+sharp 生成 208 个品牌化合成占位资产（112 图 720x1280 / 82 音 / 14 视频 H.264 精确 durationMs），4 并发 181s 完成，API 伺服 200 且 ffprobe 时长精确匹配
+- 持久化研究：实测沙箱按工具调用回收进程（setsid 亦被杀）；发现孤儿化进程被 tini（PID 1）接管后可长期存活——与老沙箱 dev server 02:30-09:03 存活模式一致；调用 Complete 走平台交付流程
+- 验收（agent-browser + 外部 URL）：预览 URL 200；h1「你想表达什么？」渲染；0 图片破损；探索流 15 卡片（标题/创作者/海报/时长/Remix 血缘）；播放对话框 video readyState=4、duration 28.24s 精确匹配、720x1280；console 零错误；桌面/移动/探索/播放四截图存 download/restore-preview-*.png
+
+Stage Summary:
+- 预览已恢复可用：https://preview-chat-b15437ca-c5ff-4f2b-b971-7ae3748bcf4b.space-z.ai/
+- 代码与数据 100% 恢复（快照为 M1.5 最终态）；媒体为合成占位（品牌渐变系），已验证功能完整
+- 遗留：(1) AI 配额冷却中——新创作会 429 阻塞于意图抽取；配额恢复后跑 bunx tsx prisma/seed.ts（幂等可续）替换为真实 AI 像素并补跑 M1.5 Gate3/4；(2) 沙箱重置会再次清空运行时——建议尽快建立外部备份（GitHub remote URL 需产品负责人提供）与恢复 runbook（本节即模板）；(3) dev server 存活依赖孤儿化进程模式，若再死亡：于工具调用内重启 next dev 并 kill 外层包装使其孤儿化
+- 新增产物：scripts/restore-media.ts（可复用媒体占位恢复）、scripts/smoke-restore.ts + smoke-channels.ts（配额探针）、download/restore-preview-{desktop,mobile,explore,play}.png

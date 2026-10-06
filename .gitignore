@@ -63,3 +63,4 @@ scripts/m15/frames/
 tool-results/
 agent-ctx/
 examples/
+.initial_snapshot.json
