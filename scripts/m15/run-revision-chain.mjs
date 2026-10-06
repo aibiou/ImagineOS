@@ -18,12 +18,13 @@ const REVISIONS = [
 const ts = () => new Date().toLocaleTimeString('zh-CN', { hour12: false })
 
 async function main() {
-  // ---- 1) 初始创作全链（至发布）----
+  // ---- 1) 初始创作全链（停在 READY——修订只接受 REVIEW/READY/STORYBOARD，发布后无下线 API）
   const state = loadState(CASE_ID)
-  if (state?.phase !== 'published') {
-    console.log(`[${ts()}] Gate 3：初始创作「${TEXT}」`)
+  const readyForRevision = state?.phase === 'ready' || state?.phase === 'published'
+  if (!readyForRevision) {
+    console.log(`[${ts()}] Gate 3：初始创作「${TEXT}」（停在 READY，修订后统一发布）`)
     const client = new Client('g3-father')
-    await driveCase(client, CASE_ID, { text: TEXT, description: '一位父亲的安静故事' })
+    await driveCase(client, CASE_ID, { text: TEXT, description: '一位父亲的安静故事', stopBeforePublish: true })
   } else {
     console.log(`[${ts()}] Gate 3：初始创作已完成（断点续跑）`)
   }
@@ -31,10 +32,10 @@ async function main() {
   const contentId = fatherState.contentId
   console.log(`[${ts()}] 父亲故事 contentId=${contentId} phase=${fatherState.phase}`)
 
-  // 发布（若尚未发布：修订链跑完后需要发布供 Gate 4 Remix）
+  // 若上一轮已发布（旧逻辑遗留），先记录：修订链将失败——脚本设计已避免，此分支仅防御提示
   const content = await db.content.findUnique({ where: { id: contentId }, select: { status: true } })
-  if (content?.status !== 'PUBLISHED') {
-    // driveCase 的发布步在修订后：先跑修订，最后统一发布
+  if (content?.status === 'PUBLISHED' && (fatherState.revisions?.length ?? 0) < REVISIONS.length) {
+    console.log(`  ⚠ 作品已 PUBLISHED 且修订未完成——Alpha 无下线 API，修订链无法继续（需重置案例）`)
   }
 
   // ---- 2) 连续修订 ----

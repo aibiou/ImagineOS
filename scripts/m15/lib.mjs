@@ -241,7 +241,7 @@ async function step(state, client, caseId, phase, nextPhase, prereqStatus, fn) {
  * 驱动一个创作案例至发布。断点续跑：state.phase 已达的阶段直接跳过；
  * 状态超前时 422 容错自动跳过。
  */
-export async function driveCase(client, caseId, { text, description, preferKeywords, answers }) {
+export async function driveCase(client, caseId, { text, description, preferKeywords, answers, stopBeforePublish }) {
   const state = loadState(caseId) ?? blankState(caseId, { text })
   const persist = () => {
     state.cookies = client.dump() // 会话随 state 落盘：断点续跑保持作者身份
@@ -345,7 +345,12 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
     persist()
   }
 
-  // 9) publish
+  // 9) publish（stopBeforePublish：停在 READY——修订链场景必需，
+  //    因为 applyRevision 只接受 REVIEW/READY/STORYBOARD，PUBLISHED 需先下线而 Alpha 无下线 API）
+  if (stopBeforePublish && state.phase === 'ready') {
+    console.log(`  [${caseId}] stopBeforePublish：停在 READY（phase=ready，不发布）`)
+    return publicState(state)
+  }
   await step(state, client, caseId, 'ready', 'published', 'READY', async () => {
     await client.post(`/api/contents/${state.contentId}/publish`, {
       visibility: 'public',

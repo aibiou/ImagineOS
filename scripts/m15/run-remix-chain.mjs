@@ -117,7 +117,21 @@ async function main() {
   // remix_received Provenance 追加是预期的（只追加不变量允许新增事件，不允许改动原有行）
   console.log(`\n[${ts()}] 原作零改动验证：${violations.length === 0 ? '✓ 原作所有行零改动（remix_received 事件按只追加不变量新增，原行未动）' : '✗ ' + violations.join('；')}`)
 
-  // ---- 7) Remix Graph 汇总 ----
+  // ---- 7) 新作品可继续发布（「从一个作品出发，诞生另一个属于新作者的创作」的最后一环）----
+  const derivativeStatus = await db.content.findUnique({ where: { id: derivativeId }, select: { status: true } })
+  if (derivativeStatus?.status === 'READY') {
+    console.log(`\n[${ts()}] Remix 衍作品发布验证（新作者自己的发布动作）`)
+    await remixer.post(`/api/contents/${derivativeId}/publish`, { visibility: 'public' })
+    state.derivativePublished = true
+    state.cookies = remixer.dump()
+    saveState(G4_ID, state)
+  } else if (derivativeStatus?.status === 'PUBLISHED') {
+    console.log(`[${ts()}] Remix 衍作品已发布（断点续跑）`)
+    state.derivativePublished = true
+    saveState(G4_ID, state)
+  }
+
+  // ---- 8) Remix Graph 汇总 ----
   const graph = {
     source: { contentId: sourceContentId, title: before.content.title, versions: before.content.versions.length },
     derivative: { contentId: derivativeId, title: derivative.title, versions: (await db.contentVersion.findMany({ where: { contentId: derivativeId } })).length },
