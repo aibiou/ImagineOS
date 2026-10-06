@@ -165,3 +165,20 @@ Stage Summary:
 - 关键结论维持并加固：瓶颈排序 视觉质量 > 内容传播 > Intent ≈ Revision > UX；native smoke 为唯一可复现的运动量证据（2.079，2.1×于组合式）
 - M2 前置条件明确（4 条，2 条已满足）；M2 冻结清单遵守
 - 下一步：配额恢复（探测中，3 通道仍 429）→ finish-m15.mjs 或分步前台执行 Phase B → 报告终版更新 → 决策报告收口
+
+---
+Task ID: m15-phase-b-probe-001
+Agent: GLM-5.3（主 agent）
+Task: 产品负责人进度问询（/goal 目标是否完成）——Phase B 配额恢复探测
+
+Work Log:
+- 核实仓库状态：Phase A 4 提交（91e17e5/bca2b49/653215a/3654e08）已推 GitHub，本地与远端一致，工作树干净
+- 核实报告体系：docs/evaluations/ 10 份报告齐备（含 decision-report Q1-Q7 证据分级版）
+- 核实运行时：dev server 存活（首页 200，跨工具调用稳定）
+- 配额探测（12:03 UTC）：LLM=429 / IMAGE=429 / TTS=429 —— 三通道仍在小时级冷却中
+- Phase B（p10 / Gate3 四连改 / Gate4 Remix 链 / Native Golden Case）维持 blocked 状态，一键编排器 finish-m15.mjs 就绪待触发
+
+Stage Summary:
+- /goal 目标达成度：Phase A（非配额依赖项）100% 完成；Phase B（配额依赖项）blocked 于 provider 冷却，无伪造、无遗漏
+- M1.5 总体 ≈85%；决策报告已可读，4 个 ⏸ 待补项全部有预注册判定标准
+- 恢复路径：配额恢复 → bun scripts/m15/finish-m15.mjs（幂等、断点续跑）→ 报告终版更新 → 决策报告收口
