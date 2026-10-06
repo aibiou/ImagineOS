@@ -90,6 +90,8 @@ interface WorkSpec {
   /** 完整真实链（LLM 全程参与）；false = 预设配方 + 真实生成像素 */
   fullChain: boolean
   preset?: { concept: { directionId: string; name: string; oneLiner: string; emotion?: string; visualDirection?: string }; story: StorySnapshot }
+  /** 预设配方的备选方向（DirectionsPayloadSchema 要求 ≥2 个方向，模拟真实「多选一」） */
+  altDirection?: { name: string; oneLiner: string; emotion?: string; visualDirection?: string }
   /** 发布后接受的修订（§63：再温暖一点） */
   revision?: { feedback: string }
   publish: boolean
@@ -115,6 +117,12 @@ const WORKS: WorkSpec[] = [
     title: '昨晚的梦，水彩一样',
     expression: '把我昨晚的梦拍成一支水彩风格的短片。',
     fullChain: false,
+    altDirection: {
+      name: '清醒的边界',
+      oneLiner: '梦与醒之间有一条模糊的岸，我们每晚都在涨潮时离开它。',
+      emotion: '冷静、克制',
+      visualDirection: '冷调蓝灰、锐利线条、超现实构图',
+    },
     preset: {
       concept: {
         directionId: 'd1',
@@ -168,6 +176,12 @@ const WORKS: WorkSpec[] = [
     title: '天空为什么是蓝色的',
     expression: '给小朋友解释：为什么天空是蓝色的？要好玩一点，35 秒。',
     fullChain: false,
+    altDirection: {
+      name: '空气里的小蓝人',
+      oneLiner: '空气里住着一群看不见的小蓝人，阳光一碰他们就变蓝。',
+      emotion: '活泼、热闹',
+      visualDirection: '粘土定格动画质感、圆润造型、高饱和撞色',
+    },
     preset: {
       concept: {
         directionId: 'd1',
@@ -238,6 +252,10 @@ async function ensureDirection(contentId: string, ownerId: string, spec: WorkSpe
     log(`  方向已选：「${directions[0]!.name}」（${directions.length} 选 1，${elapsed()}）`)
   } else {
     const concept = spec.preset!.concept
+    const alt = spec.altDirection ?? {
+      name: '另一个方向',
+      oneLiner: '如果换个说法，这个故事也可以这样讲。',
+    }
     await planService.saveDirections(contentId, [
       {
         id: concept.directionId,
@@ -247,9 +265,17 @@ async function ensureDirection(contentId: string, ownerId: string, spec: WorkSpe
         visualDirection: concept.visualDirection,
         expectedDurationSec: 32,
       },
+      {
+        id: 'alt',
+        name: alt.name,
+        oneLiner: alt.oneLiner,
+        emotion: alt.emotion,
+        visualDirection: alt.visualDirection,
+        expectedDurationSec: 32,
+      },
     ], ownerId)
     await planService.selectDirection(contentId, concept.directionId, ownerId)
-    log(`  方向已选（预设）：「${concept.name}」`)
+    log(`  方向已选（预设）：「${concept.name}」（2 选 1）`)
   }
 }
 
@@ -280,8 +306,15 @@ async function ensureGeneratedToReview(contentId: string, ownerId: string, label
     await drain(label)
     return
   }
-  const { versionNumber } = await generationFlow.startStoryboardGeneration(contentId, ownerId)
-  log(`  ${label}：生成任务已入队（第 ${versionNumber} 版配方，${elapsed()}）`)
+  // Remix 副本（READY/REVIEW，已继承配方）走同版本重跑；原生流程从 STORYBOARD 首次生成
+  const content = await reload(contentId)
+  if (content.status === 'READY' || content.status === 'REVIEW') {
+    await generationFlow.regenerate(contentId, ownerId)
+    log(`  ${label}：再创作任务已入队（沿用配方重新生成，${elapsed()}）`)
+  } else {
+    const { versionNumber } = await generationFlow.startStoryboardGeneration(contentId, ownerId)
+    log(`  ${label}：生成任务已入队（第 ${versionNumber} 版配方，${elapsed()}）`)
+  }
   await drain(label)
 }
 

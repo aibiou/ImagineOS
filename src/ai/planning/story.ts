@@ -112,7 +112,7 @@ const StoryboardSchema = z.object({
             }),
           )
           .min(1)
-          .max(4),
+          .max(8), // 单场景镜头上限宽松（时长预算驱动总镜头数；LLM 偶尔不拆场景）
       }),
     )
     .min(1),
@@ -126,7 +126,8 @@ const STORYBOARD_SYSTEM = `你是 ImagineOS 的分镜师。把故事场景分解
 3. cameraMotion 从 zoom_in / zoom_out / pan_left / pan_right / static 中选，与情绪配合（回忆涌现→zoom_in，开阔→pan_right）。
 4. durationMs：镜头时长（毫秒）。所有镜头总和 ≈ 目标总时长。
 5. narrationLine：该镜头的旁白台词（中文口语，≤30字，与画面互补而非重复描述）。有旁白时相邻镜头台词连起来是完整叙述。
-6. 同一人物的视觉特征（服装、年龄、发型）在所有 imagePrompt 中保持一致，写进每个提示词。`
+6. 同一人物的视觉特征（服装、年龄、发型）在所有 imagePrompt 中保持一致，写进每个提示词。
+7. 尽量把镜头按叙事节奏分配到各场景（每场景 1–4 镜）；仅当某一段叙事确实不可拆时才允许单场景超过 4 镜。`
 
 const STORYBOARD_JSON_HINT = `{
   "scenes": [

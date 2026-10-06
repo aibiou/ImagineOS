@@ -48,3 +48,31 @@ Stage Summary:
 - 产物：src/core(领域层)/src/infra(配置)/src/app/api(7 组路由)/prisma(schema+seed)/tests(4 套件 30 用例)/首页
 - 已知问题：User 硬删除存在外键约束（Remix.remixer/ContentVersion.creator 无级联）——Alpha 用软删除语义，正式处理留 E13/Trust 层；POST /api/contents(手工建)与 imagine/start 语义重叠待收敛
 - 下一步：M1 First Video —— E3 Intent Engine（LLM 结构化抽取+访谈）→ E4 Creative Planner → E5 Model Router（z-ai Adapter×3+组合式视频 Provider）→ E6 Generation Jobs（DB 持久化+乐观锁 claim）→ E7 Media Pipeline（FFmpeg 合成）
+
+---
+
+Task ID: m1-first-video
+Agent: GLM-5.3（主 agent）
+Task: M1 First Video —— 按 M0 评审指令（docs/product/m0-review-m1-direction.md）完成 E3-E7 真实生成管线 + P0/P1 UI 验收。本会话为断点续跑收尾。
+
+Work Log:
+- 恢复上下文：发现上个会话已完成 E3-E7 大部分实现（intent/planning/router/jobs/ffmpeg/workers/create 页面/语言字典），但 dev server 持有已删除的旧 custom.db inode（/proc/1187/fd 确认 deleted），导致 explore API 读到旧种子数据
+- 重启 dev server → explore 返回「父亲与那辆二八大杠」（§63 全链真实产物：49.4s MP4 + 封面 + 11 图 + 8 TTS 已在磁盘库）
+- 修复 seed 预设配方路径 bug①：DirectionsPayloadSchema 要求 ≥2 方向，但预设只存 1 个 → 补第二备选方向（altDirection），损坏数据被 saveDirections 整批替换自愈
+- 修复 seed Remix 路径 bug②：fork 副本状态 READY（继承配方），ensureGeneratedToReview 只会调 startStoryboardGeneration（要求 STORYBOARD）→ 增加 READY/REVIEW 分支走 generationFlow.regenerate（同版本重跑=真实再创作）
+- 修复 storyboard API 500 bug③：StoryboardSchema 硬约束 shots.max(4)，LLM 时长预算（45s→5镜）与单场景 5 镜冲突且修复轮不拆 → 放宽至 max(8) + system prompt 规则 7 引导按叙事拆场景
+- 断点续跑 seed 全量完成：林小满自行车（§63 v1→v2 修订→发布）+ 阿澈水彩梦 + 南星天空蓝 + 阿澈 Remix 自行车（真实再生成像素）→ 4 件公开作品 · 54 件资产
+- agent-browser 黄金路径全链验证：建议词→表达→意图（真实 LLM 3 方向：水滴梦境/枕边漫游/记忆捕梦）→选向→故事→分镜→AI 生成（5 镜图像+TTS）→REVIEW 预览→渲染成片→发布，零 console 错误
+- 验证 Remix 黄金路径：explore 卡片「从这里开始我的版本」→ 匿名用户获得 READY 副本（配方继承）
+- P0 验收截图：m1-home-desktop/mobile.png、m1-explore-desktop.png、m1-play-dialog.png、m1-create-review/ready/published.png
+- 门禁：lint ✓ / typecheck 0 错误 ✓ / vitest 30/30 ✓
+
+Stage Summary:
+- M1 主链 Intent Engine → AI Generation → Visual Content → Revision → Publish → Remix 全部真实跑通（无一处 mock）
+- P0-1 ✓：Explore 卡片结构 Visual Content→Title→Creator→AI involvement→Remix，poster/video/duration 真实资产，9:16 海报+播放浮层+时长角标+Remix 血缘角标「从《xxx》开始」
+- P0-2 ✓：「你想表达什么？」保持 h1 核心入口；无模型/Seed/采样参数暴露
+- P0-3 ✓：产品语言字典（src/app/_language）全站生效——初稿/第N版/共X版/继续修改/从这里开始我的版本/换一批画面/满意，渲染成片
+- P1 ✓：Remix 文案「从这里开始我的版本」；Home IA 未重构；黑紫基调向内容感演进（视觉卡片+成片播放器）
+- 发布文案闭环 M1 命题：「已发布 · 别人可以从这里开始他们的版本」
+- 已知留白：User 硬删除外键（E13）；POST /api/contents 与 imagine/start 语义收敛；多画幅（当前固定 9:16）；字幕行 subtitles.lines 未接旁白文本
+- 下一步：M2 Creator Loop —— E8 发布/分享（Publication 通道）、E9 Explore 发现（排序/互动）、E10 Remix 强化（血缘图谱可视化）
