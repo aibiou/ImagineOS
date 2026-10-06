@@ -21,6 +21,36 @@ M1.5 在 M1 的真实管线上执行了七道质量闸门。**核心结论**：
 
 ---
 
+## 0.5 Model Provider 配置与链路验证（2026-10-06 多模型服务联调）
+
+> 背景：产品负责人在「设置 → 模型服务」页配置了外部 OpenAI 兼容服务 **agnes-com**（`apihub.agnes-ai.com/v1`，ADR-0004），使 LLM/Image/Video 三通道不再依赖单一 z-ai 配额。本节为 Provider 信息的权威记录（用户指令：所有评测报告须标注每个通道的真实 Provider/Model）。
+
+### 0.5.1 Provider 矩阵（本 M1.5 收口期的真实执行配置）
+
+| 通道 | Provider | Model | 链路验证 | 定价（2026-10-06 官方 wiki，限时免费期） |
+|------|----------|-------|----------|------------------------------------------|
+| LLM（text.plan） | `openai-compat:agnes-com` | `agnes-3.0-flash` | ✅ 5/5 调用成功，延迟 5.3–30.6s | $0（牌价 input $0.05/M · output $0.15/M） |
+| Image（image.shot） | `openai-compat:agnes-com` | `agnes-image-2.5-flash` | ✅ 12/12 调用成功，延迟 8.7–13.4s（均值 9.9s） | $0（牌价 $10–24/千张，按分辨率） |
+| TTS（audio.tts） | 无自定义 → `zai-tts` 兜底 | `zai-tts-tongtong` | ✅ fallback 链序已验证；36 次尝试全部 429（配额冷却中） | z-ai 内部配额 |
+| Video（video.shot） | `openai-compat:agnes-com` | `agnes-video-2.5-flash` | 🔶 协议已适配并单测覆盖；服务端队列满（503）阻塞中 | $0（牌价 $0.025/秒 @720P） |
+
+### 0.5.2 链路验证方法与证据（A 级）
+
+验证路径：**页面配置 → 数据库存储（ModelProviderConfig 3 行，全部 enabled）→ Provider Registry（ensureChainsFresh 动态建链：自定义 priority 升序 → z-ai 兜底）→ Runtime 调用 → Generation 记账表**。以真实匿名用户会话驱动完整创作流（imagine/start → intent → directions → story → storyboard → generate），全部记账行可复查（`scripts/m15/state/chain-verification.json`）：
+
+- **LLM**：`text.plan/openai-compat:agnes-com/succeeded ×5` —— 意图编译/方向/故事/分镜全部走自定义 Provider；
+- **Image**：`image.shot/openai-compat:agnes-com/succeeded ×12` —— 生成 + 下载全链成功；
+- **TTS**：`audio.tts/zai-tts/failed ×36` —— 无自定义时直达 z-ai 兜底的链序证明（429 为配额事实，非链路缺陷）；
+- **降级链序**：首跑（下载缺陷修复前）`agnes 失败 → zai-image 自动接管` 的记账序列证明失败自动降级生效。
+
+### 0.5.3 联调期发现并修复的协议级缺陷（工程记录）
+
+1. **S3 预签名 URL 鉴权冲突**：Agnes 图像返回预签名 URL，带 `Authorization` 头下载必 401（XML 签名失效）。修复：`downloadMedia` 裸下载优先、401/403 再带 Bearer 重试（图像/视频下载共用）。
+2. **视频协议不兼容**：Agnes 使用 OpenAI-Videos 风格（`POST /v1/videos` keyframe 模式 + `GET {origin}/agnesapi` 轮询），与原 SiliconFlow 风格（`/video/submit` + `/video/status`）完全不同。修复：video.shot 适配器双协议自动探测（404 即切换）；`size→720P/aspect_ratio` 映射、`durationSec→seconds(4-12)` 夹取、**data URI 首帧直接内联**（实测通过，规避了"首帧必须公网可访问"约束——生成期内容默认私有，资产路由对外 404）。
+3. **TTS 无可用自定义源**：Agnes 模型目录（12 个模型）全部为文本/图像/视频，无 TTS。TTS 通道维持 z-ai 兜底——这是当前 Phase B 补跑的唯一硬阻塞（见 §10）。
+
+---
+
 ## 1. Gate 1 — 真实内容质量（10 类型真实创作）
 
 ### 1.1 案例矩阵（9/10 已发布，p10 阻塞于配额）
@@ -224,17 +254,19 @@ Alpha 的成本记账以**调用次数 + 延迟**为代理（provider 未返回�
 
 ---
 
-## 10. 阻塞项与恢复路径（透明记录；2026-10-06 收口更新）
+## 10. 阻塞项与恢复路径（透明记录；2026-10-06 多 Provider 联调更新）
 
-| 项 | 状态 | 恢复动作 |
-|----|------|----------|
-| p10 发布 | 配方/分镜/7 资产完成，Job failed（429）| `node scripts/m15/run-cases.mjs p10-cause`（驱动脚本已支持 failed Job 自动 regenerate 重入） |
-| Gate 3 四连改 | 脚本就绪 | `node scripts/m15/run-revision-chain.mjs` |
-| Gate 4 Remix 链 | 脚本就绪（依赖 Gate 3 完成） | `node scripts/m15/run-remix-chain.mjs` |
-| Native Golden Case | 双路径已实现+单镜 A 级证据 | `bash scripts/m15/restart-dev.sh native && node scripts/m15/run-native-golden.mjs && bash scripts/m15/restart-dev.sh composition` |
+**阻塞结构已改变**：LLM/Image 通道经 agnes-com 自定义 Provider 已畅通（§0.5）；剩余阻塞收敛为 **TTS 通道无可用 Provider**（agnes 无 TTS 模型 + z-ai 429 冷却）与 **agnes 视频队列满（503）**。后台守望器（`scripts/quota-watcher.mjs`，孤儿化进程）每 150s 探测两项，恢复即立旗触发补跑。
 
-一键补跑（含全部依赖顺序与模式切换）：`node scripts/m15/finish-m15.mjs`（配额探测 → 全链补跑 → 终版数据）。
-预计总时长 ~30–40 分钟（顺序执行，全部幂等）。
+| 项 | 状态 | 恢复动作 | 依赖 |
+|----|------|----------|------|
+| p10 发布 | 配方/分镜/部分资产完成 | `node scripts/m15/run-cases.mjs p10-cause`（failed Job 自动 regenerate 重入） | z-ai TTS 恢复 |
+| Gate 3 四连改 | 脚本就绪（未启动） | `node scripts/m15/run-revision-chain.mjs` | z-ai TTS 恢复 |
+| Gate 4 Remix 链 | 脚本就绪（依赖 Gate 3） | `node scripts/m15/run-remix-chain.mjs` | z-ai TTS 恢复 |
+| Native Golden Case | 协议适配完成 + 单测覆盖 | `bash scripts/m15/restart-dev.sh native && node scripts/m15/run-native-golden.mjs && bash scripts/m15/restart-dev.sh composition` | z-ai TTS + agnes 视频队列 |
+
+一键补跑（含等待-触发-模式切换-终版度量全链）：`node scripts/m15/finish-m15.mjs`（多 Provider 版：等 TTS → p10/G3/G4 → Native Golden → 终版数据；幂等断点续跑）。
+预计 TTS 恢复后实际执行时长 ~40–60 分钟。
 
 ## 11. 交付物清单
 
