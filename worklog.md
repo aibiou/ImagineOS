@@ -124,3 +124,19 @@ Stage Summary:
 - 代码与数据 100% 恢复（快照为 M1.5 最终态）；媒体为合成占位（品牌渐变系），已验证功能完整
 - 遗留：(1) AI 配额冷却中——新创作会 429 阻塞于意图抽取；配额恢复后跑 bunx tsx prisma/seed.ts（幂等可续）替换为真实 AI 像素并补跑 M1.5 Gate3/4；(2) 沙箱重置会再次清空运行时——建议尽快建立外部备份（GitHub remote URL 需产品负责人提供）与恢复 runbook（本节即模板）；(3) dev server 存活依赖孤儿化进程模式，若再死亡：于工具调用内重启 next dev 并 kill 外层包装使其孤儿化
 - 新增产物：scripts/restore-media.ts（可复用媒体占位恢复）、scripts/smoke-restore.ts + smoke-channels.ts（配额探针）、download/restore-preview-{desktop,mobile,explore,play}.png
+
+---
+Task ID: sandbox-restore-002
+Agent: GLM-5.3（主 agent）
+Task: 远端一致性核对 + 恢复增量备份推送（产品负责人提供 GitHub 仓库 aibiou/ImagineOS）
+
+Work Log:
+- 拉取远端 main（token 经 http.extraHeader 传递，不落盘 .git/config）：远端含 M0+M1.5 共 8 提交（顶点 469d8a3 quota-recovery orchestrator）
+- 文件级核对：核心代码（src/prisma/workers/tests/docs/package.json/tsconfig/bun.lock）与远端 **零差异**——/tmp 快照即远端推送后的最终态
+- 本地独有增量：worklog 恢复记录、restore-media/smoke 脚本、4 张验收截图；远端独有垃圾：examples/websocket（脚手架示例）与 tool-results/*.txt（工具输出）——被 .gitignore 覆盖但早期已跟踪（"运行数据不入库"原则遗漏项）
+- 同步执行：git reset --mixed origin/main 对齐基线 → 暂存增量 + git rm --cached 移除垃圾跟踪 → 提交 528a5b0 chore(ops) → 推送成功（469d8a3..528a5b0）→ 复核 git diff origin/main 无输出（完全一致）+ 上游跟踪已设置
+- 附带确认：预览 URL 200 / dev server 存活（09:15 起跨 20+ 次工具调用）/ 仓库为私有（匿名 404 属预期）
+
+Stage Summary:
+- 本地与远端现已 100% 一致（main = 528a5b0）；沙箱再重置时可从远端完整恢复（代码+文档），仅需重跑 bun install + prisma generate + restore-media.ts + seed
+- 恢复 runbook 已固化在 worklog sandbox-restore-001/002 两条记录中
