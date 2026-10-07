@@ -13,7 +13,7 @@
 | `m15-expression-quality-report.md` | ✅ 终版（总报告，§0.5 Provider 权威记录） |
 | `m15-visual-quality-report.md` / `m15-revision-report.md` / `m15-remix-report.md` / `m15-content-integrity-report.md` / `m15-cost-report.md` | ✅ 终版 |
 | `human-test-plan.md` | ✅ Final Validation 锁定版（待人工执行） |
-| `m15-human-test-report.md` | 模板就绪（执行后填充） |
+| `m15-human-test-report.md` | 🟡 执行阶段已开启（§0.5 Pre-flight 全绿 + 系统侧预演 2/2；真人字段待采集） |
 
 ## 评测维度（§59 子集，Alpha 落地）
 

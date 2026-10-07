@@ -1,8 +1,8 @@
 # Human Test Report — M1.5 Gate 7（真人表达测试）
 
-> 文档地位：Gate 7 执行报告模板 · 真人执行前就绪，执行后填充
-> 状态：**待人工执行**（本模板由系统侧预填充能力数据；凡未执行的字段一律标「未执行」，禁止预填虚构值）
-> 对应计划：`docs/evaluations/human-test-plan.md`（16 人 / 30 分钟 / 六指标）
+> 文档地位：Gate 7 执行报告 · **执行阶段已开启（2026-10-07 系统侧预演完成，真人数据待采集）**
+> 状态：系统侧就绪经预演实证；凡未执行的字段一律标「未执行」，禁止预填虚构值（预演会话属机器侧验证，不计入六指标，见 §0.5 隔离机制）
+> 对应计划：`docs/evaluations/human-test-plan.md`（16 人 / 30 分钟 / 六指标）· 观察员物料：`download/gate7-kit/gate7-observer-kit.md`（逐字稿卡/记录表/Pre-flight/Runbook）
 
 ---
 
@@ -33,6 +33,48 @@
 | composition / native 配置区分 | Generation 记账：type=video.shot 存在且 succeeded → native 镜头；导出结果含 nativeConfig 字段（native / native-with-fallback / composition-fallback） | ✅ |
 
 **执行注意**：Alpha 默认 composition 路径；如本轮测试需含 native 样本，测试时段内 dev server 以 `IMAGINEOS_FORCE_NATIVE=1` 运行（切换方式：`bash scripts/m15/restart-dev.sh native`），并在 §1 记录配置。
+
+---
+
+## 0.5 执行阶段开启与系统侧预演（2026-10-07，产品负责人指令：进入 Gate 7 执行阶段）
+
+### 0.5.1 Pre-flight 清单实测结果（human-test-plan.md §10）
+
+| 检查项 | 实测结果 | 状态 |
+|--------|----------|------|
+| 预览可达 | 本地 home 200 + 预览 URL 200（手机/桌面均可） | ✅ |
+| Provider 三通道探测 | agnes LLM 真实对话 2.3s ✅ / agnes Image 真实生图 11.3s ✅ / z-ai TTS 真实合成 733ms ✅（运行时同路径连接测试端点验证） | ✅ 全绿 |
+| 运动路径配置 | composition（dev server `IMAGINEOS_FORCE_NATIVE` 为空，进程环境实测） | ✅ 已决定 |
+| 导出链路预演 | `export-human-test.mjs --since` 时间窗过滤实测正确（见 0.5.2） | ✅ |
+| 种子/机器会话隔离 | isDemo 排除 + 时间窗双机制（34 历史非种子用户被 --since 正确排除） | ✅ |
+
+### 0.5.2 系统侧预演记录（A 级证据，非 Gate 7 数据）
+
+**定位声明**：预演为机器侧管道与环境就绪验证（全新匿名会话全链并发驱动，与测试日两位被试同时创作同形态）；六指标的人工编码字段（首反应/访谈确认/修订语境）不可由脚本产生，预演会话**不计入**任何 Gate 7 指标。
+
+| 项 | 记录 |
+|----|------|
+| 预演时间窗 | 2026-10-07T00:37:09Z 起（窗口文件 state/gate7-rehearsal-window.json） |
+| 会话形态 | 2 个全新匿名会话（无 cookie 恢复 = 独立 User）**并发**全链至发布——同时考验 SQLite 跨会话写锁（30s 事务超时修复的真实并发验证） |
+| 被试人设 | R1（45+，家庭回忆，小卖部母亲六十岁生日）/ R2（20-30，情绪，凌晨下班路）——对应计划 §2 配额维度 |
+| 结果 | **2/2 发布成功**：R1 105s / R2 154s（均在干净窗口范围；并发无写锁冲突） |
+| 导出演练 | `--since=预演窗口起点` → 被试数 2，六指标自动推导正确（contentsCreated/published 均 1）；历史会话全部排除 |
+| 完整性复核 | idsFile 作用域批量（state/gate7-rehearsal-ids.txt，2 件）→ M1.5 生产案例 15 件 **0 错 0 警**（含预演作品） |
+| 隔离机制 | 预演用户创建于今日；真人测试导出用 `--since=<真人测试开始时刻>` 自动排除预演会话（时间窗隔离，导出实测验证） |
+
+### 0.5.3 配额预算（10–16 人规模，含安全余量）
+
+- 每被试全链 ≈ 8.6 次 LLM（agnes，免费）+ 10.9 张图（agnes，免费）+ 9.1 段 TTS（**内置 z-ai，唯一配额敏感通道**）；
+- 按计划 §8 节奏 4–6 人/天 → TTS 日耗 ~15–55 段，低于历史风暴阈值（~130 段/天）；
+- 风控：每天开场跑 Pre-flight 探测（observer kit §C）；测试中中止条件三案（连续 3 任务失败 / 预览不可达 >5min / 5xx）；失败重入机制（regenerate）已实战验证。
+
+### 0.5.4 真人阶段交接（待产品负责人执行）
+
+1. **招募**（计划 §2：目标 16 人/起步 10 人；≥70% 无剪辑经验；三年龄段；手机 ≥60%）；
+2. **执行**（计划 §3 逐字稿 + observer kit 打印物料：逐字稿卡 A / 记录表 B / 每日 Pre-flight C）；
+3. **收尾命令**（observer kit §D Runbook：导出 + idsFile 完整性复核）；
+4. **回传**：记录表转录 + 导出 JSON → 填充本报告 §1–§7（人工字段与系统字段合并规则见计划 §5.1）；
+5. **裁决**：报告 §6 决策矩阵 → M2 方向确定（M2 开发冻结至此时，Final Package §5）。
 
 ---
 

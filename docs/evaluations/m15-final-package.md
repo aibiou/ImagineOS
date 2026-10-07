@@ -15,7 +15,7 @@
 | 2 | Provider Matrix | 本包 §2 | ✅ Final |
 | 3 | Known Limitations | 本包 §3 | ✅ Final |
 | 4 | Demo Case 清单 | 本包 §4（数据由 `scripts/m15/demo-case-inventory.mjs` 从 DB 实时提取，可重跑刷新） | ✅ Final |
-| 5 | Gate 7 真人测试准备 | `human-test-plan.md`（Final Validation 锁定版：流程/任务模板/采集字段/评分标准四项确认）+ `m15-human-test-report.md`（执行报告模板，系统侧 8 项就绪） | ✅ Ready（执行属人工阶段） |
+| 5 | Gate 7 真人测试准备 | `human-test-plan.md`（Final Validation 锁定版：流程/任务模板/采集字段/评分标准四项确认）+ `m15-human-test-report.md`（§0.5 执行阶段已开启：Pre-flight 全绿 + 系统侧预演 2/2 成功 + 配额预算与真人阶段交接）+ 观察员物料包 `download/gate7-kit/` | 🟡 **执行阶段开启**（系统侧实证就绪，真人数据待产品负责人采集） |
 | 6 | M2 冻结声明 | 本包 §5 | ✅ 生效 |
 
 **支撑文档（证据源，均已终版）**：`m15-expression-quality-report.md`（总报告，含 §0.5 Provider 权威记录）、`m15-visual-quality-report.md`、`m15-revision-report.md`、`m15-remix-report.md`、`m15-content-integrity-report.md`、`m15-cost-report.md`。
