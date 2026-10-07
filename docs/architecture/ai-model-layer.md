@@ -85,4 +85,14 @@ create(image_url=dataURL, prompt, quality=speed|quality, size)
 
 **agnes-cn 视频链路实测**（2026-10-07 06:44，两段证据）：①提交端点 `api.agnes-ai.cn/v1/videos` 真实可达——队列满时返回本地化业务错误（中文「视频队列已满，请稍后重试」；同期 agnes-com 为英文 `video queue is full`，两站点独立部署、消息各自本地化）；②轮询路径 `api.agnes-ai.cn/agnesapi` 零额度坐实——GET 假 video_id 返回 JSON 协议体（`{"error":{"code":404,"message":"任务不存在"}}`，与 com 站 `task not found` 同构），此前为文档推导，现已实测确认。中英文错误消息均命中冷却正则（`video_queue_full` 与「队列满」双保险）。视频队列两站点探测时点均满（R1 事实延续），native 样本采集仍待队列窗口。
 
+**官方文档双站复核**（2026-10-07 07:00，产品负责人指定 agnes-video-25-flash 双站页 + tokenplan，实测拉取 .md 源逐节比对）：
+
+1. **双站同构**：agnes-video-25-flash 与 tokenplan 两页内容完全一致，仅域名与币种差异（cn 现价 `¥0/秒`、com 现价 `$0/秒`，均为限时免费原价 0.15¥ / 0.025$ 每秒）。
+2. **视频免费档限速**：允许发起 RPM 2 / **实际 RPM 1**；RPM 与每日秒数配额同时生效（tokenplan §5-§6；免费期计费 ¥0）。与代码注释口径一致。
+3. **限制池规则（关键合规确认）**：限制按**密钥类型**共享，同类型多密钥**不叠加**额度（tokenplan §8 明示「不用于叠加使用限制」）；但 agnes-cn（api.agnes-ai.cn）与 agnes-com（apihub.agnes-ai.com）是**两套独立部署**（域名/本地化/限制池各自独立）→ 双 provider 轮转是官方口径下合规的额度利用方式，非同站多密钥绕限。
+4. **轮询最佳实践**：官方建议 1–2 秒一次直至 completed/failed；keyframe 模式**必须**带 `model_name` 查询（代码恒带 ✓）；以 `status`/`progress` 为准、忽略 `internal_*` 字段（代码已按 status 判定 ✓）；我们 3s 轮询处保守侧，不超速且覆盖建议区间下限的 1.5 倍冗余。
+5. **Flash 专属校验**：`size` 固定字符串 `"720P"`、`images` ≤5、`audios` ≤3、`videos` 不支持（代码 `size:'720P'` 硬编码 ✓、keyframe 模式仅传 first_frame ✓）；校验失败不建任务不计费。
+6. **遗留风险（first_frame 形态）**：文档口径 first_frame 为「可公开访问的 URL」；生产传 data URI（base64）——已通过 Flash 校验层（实测返回 503 队列满而非 400，说明未被校验拒绝），但**推理层是否接受 data URI 待队列窗口验证**（native 历史零成功均在提交层失败，无推理层证据）；本地环境无公网 URL 托管能力，data URI 是当前唯一可行形态，风险如实入档。
+7. **历史失败复盘佐证**：Generation 记账 15 条 agnes video.shot 失败呈延迟双峰——~20.5s（队列满+内部退避重试耗尽）与 ~200ms（非队列满错误立即抛出，与 RPM 1 下 429 形态吻合：21:12 时 6 次调用挤在 3 秒内）；失败原因此前未持久化（`generationLog.append` 丢弃 `input.error`），已修复——失败原因现写入 `outputJson.error`，为 429 冷却调试提供数据源。
+
 **运维口径**：`node scripts/m15/probe-channels-now.mjs`（LLM 逐行 + TTS，近零消耗）；`--full` 追加 Image（每行 1 张）与 Video 队列（每行 4s 每日额度）探测；`--video` 仅 Video 队列（最小额度验证轮询路径）。另有零额度轮询路径探测：`node scripts/m15/probe-video-poll-path.mjs`（GET 假 video_id，不提交任务不耗每日配额）。

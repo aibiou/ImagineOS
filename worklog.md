@@ -481,3 +481,25 @@ Stage Summary:
 - 新事实入档：agnes 双站点视频队列 2026-10-07 06:44 时点均满（R1 延续），native 样本采集（全镜 Golden Case 重跑）仍待任一站点队列窗口——与 §0.5.7 口径一致
 - 新工具：probe-video-poll-path.mjs（零额度轮询路径探测）+ probe-channels-now.mjs --video（最小额度视频模式）
 - 推送状态：15d943c 及本次 commit 均在本地 main，远端推送需产品负责人提供临时 token（无凭据不可推）
+
+---
+Task ID: gate7-docs-verify-007
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令——阅读双站点 agnes-video-25-flash 官方文档（agnes-ai.cn / agnes-ai.com）确认最佳实践与限速；提供临时 token 推送积压 commit
+
+Work Log:
+- 双站文档拉取（Mintlify .md 源，指定页 agnes-video-25-flash + 佐证页 tokenplan）：双站完全同构，仅域名/币种差异——Flash 限时免费（cn 原价 ¥0.15/秒 → 现价 ¥0/秒；com 原价 $0.025/秒 → 现价 $0/秒）
+- 限速确认（tokenplan §5）：视频免费档允许发起 RPM 2 / 实际 RPM 1，与既有代码注释口径一致；文本 default 实际 RPM 10（2026-09-23 公告减半）、图片 1K 档实际 RPM 10 复核无变化
+- 关键合规确认（tokenplan §8）：限制池按密钥类型共享、同类型多密钥不叠加额度（「API 密钥不用于叠加使用限制」明示）；但 agnes-cn/api.agnes-ai.cn 与 agnes-com/apihub.agnes-ai.com 为两套独立部署（域名/本地化/限制池独立）→ 双 provider 轮转是官方口径下合规的额度利用方式，非同站多密钥绕限
+- 最佳实践逐项核对：轮询官方建议 1–2s（我们 3s 保守不超速，不动）；keyframe 轮询必须带 model_name（代码恒带 ✓）；以 status/progress 为准忽略 internal_*（✓）；Flash 校验 size="720P"/images≤5/audios≤3/videos 不支持（代码硬编码 ✓）；seconds 字符串 4–12（agnesSeconds 夹取 ✓）
+- 风险入档：first_frame 官方口径为「可公开访问的 URL」，生产传 data URI——实测已过 Flash 校验层（503 队列满而非 400），推理层是否接受待队列窗口验证；本地无公网 URL 托管能力，data URI 为当前唯一可行形态
+- 历史失败复盘：Generation 记账 15 条 agnes video.shot 失败延迟双峰（~20.5s = 队列满+内部退避耗尽；~200ms = 非队列满立即抛，与 RPM 1 下 429 形态吻合，21:12 时 6 次调用挤 3 秒内）；坐实限速感知调度必要性
+- 观测缺口修复（src 改动）：generationLog.append 此前丢弃 input.error（15 条历史失败全无原因可查）——现失败原因写入 outputJson.error，为 429 冷却调试提供数据源；无测试依赖旧形态
+- 门禁：tsc ✓ eslint ✓ vitest 97/97 ✓；dev server 重启加载新代码（composition 模式）
+- 文档：ai-model-layer.md §8 新增「官方文档双站复核」七条；m15-human-test-report.md §0.5.8 新增「官方文档双站复核」段
+- 推送：临时 token 推送 15d943c + 20bb487 + 本次 commit 至 origin/main（token 不再复用）
+
+Stage Summary:
+- 官方文档复核完成：双站同构、Flash 限时免费、视频 RPM 1 确认；双 provider 轮转合规性获官方限制池规则背书（独立部署 = 独立额度池）
+- 现有实现与官方最佳实践零偏差（轮询间隔保守侧、model_name 恒带、Flash 参数全部合规）；唯一遗留风险 first_frame data URI 形态待队列窗口实测
+- 失败原因可观测性补齐：Generation 失败记账从「无原因」到「error 落 outputJson」

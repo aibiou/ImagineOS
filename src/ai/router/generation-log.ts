@@ -33,7 +33,11 @@ export const generationLog = {
             purpose: input.purpose,
             ...(input.inputSummary ?? {}),
           }),
-          outputJson: input.output ? JSON.stringify(input.output) : null,
+          outputJson: input.output
+            ? JSON.stringify(input.output)
+            : input.error
+              ? JSON.stringify({ error: input.error }) // 失败原因可观测（限速/队列满/超时——429 冷却调试的数据源）
+              : null,
           costJson: input.cost ? JSON.stringify(input.cost) : null,
           latencyMs: input.latencyMs ?? null,
         },
