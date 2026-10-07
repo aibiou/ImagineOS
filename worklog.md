@@ -402,3 +402,21 @@ Work Log:
 Stage Summary:
 - 两次 Gate 7 期间线上缺陷处置（失败传导/看门狗/失败卡 + 生成模式三态徽章）已全部落远端
 - 本 session 零代码改动，纯推送操作；token 为临时凭据不再复用
+
+---
+Task ID: gate7-audit-003
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人要求 Video Pipeline Audit（只读不改）：全链路追踪 + 关键字搜索 + A/B/C 三问 + 文档一致性 + 审计报告
+
+Work Log:
+- 全链路源码取证：creation route → intent-service → plan-service（写入字段仅 cameraMotion/durationMs/narrationLine/emotion，零 motion 写入点）→ generation-flow（三入口硬编码 type: video.storyboard）→ pipeline-executor（motionModeFor 为全系统唯一分岔点：FORCE_NATIVE=1 或 shot.motion=native 才走 native，否则默认 composition）→ registry（videoShotChain = agnes-com ENABLED + zai-video 兜底，恒可用）→ ffmpeg composeVideo
+- DB 只读取证（scripts/m15/audit-video-pipeline.mjs，新增工具脚本，可重跑）：该创作成功 Job shotAssets=5、videoAssetId=0；全库 28 条 video.shot 记账无一条属于该创作（15 agnes 失败 + 12 zai 失败 + 1 zai 成功，全来自 Native Golden 评估）；4 条 native-fallback 事件全在 cmux6az7；两版本配方 motion 全 undefined；Job 类型仅 video.storyboard(43)/video.render(29)
+- 进程实测：运行中 dev server（PID 16381/16396）IMAGINEOS_FORCE_NATIVE 为空
+- 文档一致性：ADR-0001（组合式优先为成文决策，调度策略 M2 再定）/ final-package Q3 不升主线 / human-test-plan §10 默认 composition 为 Pre-flight 显式决定 / report §0.5.6 三态 C 已记录——代码与文档零偏差；唯一缺口 = 仓库根 README.md 不存在
+- 产出审计报告 download/video-pipeline-audit-report.md（当前架构/实际运行路径/与产品目标差异/风险 R1-R5/最小修复方案 0-3）；零代码改动、零数据写入
+
+Stage Summary:
+- 三态判定确认：C（默认直接 composition），归因 = 产品设计如此（ADR-0001 方案 B + Q3 裁决）+ 配置默认如此（两个 native 开启途径一个未启用一个是零写入点死字段）；非 fallback、非代码 bug
+- video.storyboard 是所有生成的唯一 Job 类型（native/composition 是 Job 内逐镜头选择），该证据本身不构成 composition 证明——shotAssets 零 videoAssetId + 零 video.shot 记账才是
+- 新增风险事实：native 通道历史成功率 1/28（3.6%），agnes-video lastTest=untested——「可用」与「可靠」之间有明显距离
+- 最小修复方案已列 4 档（零改动/README/路由决策日志/死字段写入点），全部留给产品负责人裁决，本 session 未实施任何一项
