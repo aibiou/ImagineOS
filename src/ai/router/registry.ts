@@ -92,6 +92,7 @@ export function resetRegistry(): void {
   audioTtsChain.push(zaiTtsProvider)
   videoShotChain.length = 0
   videoShotChain.push(zaiVideoProvider)
+  clearRateState()
 }
 
 /** 测试用：完全清空（阻断一切真实调用） */
@@ -100,6 +101,7 @@ export function clearRegistry(): void {
   imageShotChain.length = 0
   audioTtsChain.length = 0
   videoShotChain.length = 0
+  clearRateState()
 }
 
 /** 测试/评估用：当前 video.shot 链是否有可用 provider（无则管线回落组合式） */
@@ -111,21 +113,32 @@ export function hasVideoShotProvider(): boolean {
 
 // 纯函数：由配置行构建四条候选链（自定义优先级升序 → z-ai 内置兜底）。
 // 导出仅用于单测；生产链经 ensureChainsFresh() 写入下方四个 chain 数组。
+// groups：同通道同优先级且有效的自定义 provider ≥2 个 → 轮转组（限速感知调度，见下方策略说明）。
 export function buildChainsFromConfigs(rows: ProviderConfigRow[]): {
   text: TextPlanProvider[]
   image: ImageShotProvider[]
   audio: AudioTTSProvider[]
   video: VideoShotProvider[]
+  groups: { text: string[][]; image: string[][]; audio: string[][]; video: string[][] }
 } {
   const text: TextPlanProvider[] = []
   const image: ImageShotProvider[] = []
   const audio: AudioTTSProvider[] = []
   const video: VideoShotProvider[] = []
+  const byPriority: Record<string, Map<number, string[]>> = {
+    llm: new Map(), image: new Map(), tts: new Map(), video: new Map(),
+  }
   // 自身保证 priority 升序（不信任调用方排序；次序为 createdAt 稳定兜底）
   const sorted = [...rows].sort((a, b) => a.priority - b.priority || a.createdAt.getTime() - b.createdAt.getTime())
   for (const row of sorted) {
     const provider = buildProviderFromConfig(row)
     if (!provider) continue
+    const bucket = byPriority[row.channel]
+    if (bucket) {
+      const ids = bucket.get(row.priority) ?? []
+      ids.push(provider.id)
+      bucket.set(row.priority, ids)
+    }
     switch (provider.capability) {
       case 'text.plan': text.push(provider as TextPlanProvider); break
       case 'image.shot': image.push(provider as ImageShotProvider); break
@@ -133,7 +146,17 @@ export function buildChainsFromConfigs(rows: ProviderConfigRow[]): {
       case 'video.shot': video.push(provider as VideoShotProvider); break
     }
   }
-  return { text, image, audio, video }
+  const groupsOf = (channel: string): string[][] =>
+    [...(byPriority[channel]?.values() ?? [])].filter((ids) => ids.length >= 2)
+  return {
+    text, image, audio, video,
+    groups: {
+      text: groupsOf('llm'),
+      image: groupsOf('image'),
+      audio: groupsOf('tts'),
+      video: groupsOf('video'),
+    },
+  }
 }
 
 /** 签名：配置变更检测（id+updatedAt+enabled+priority） */
@@ -147,6 +170,9 @@ const DYNAMIC_CHAIN_SYNC = process.env.NODE_ENV !== 'test'
 let chainSyncState: { sig: string; at: number } | null = null
 const CHAIN_SYNC_TTL_MS = 3_000
 let chainSyncInflight: Promise<void> | null = null
+
+/** 同优先级轮转组（限速感知调度）：ensureChainsFresh 维护；测试环境不注入（保持链序确定性） */
+const rotationGroups: Record<string, string[][]> = {}
 
 /** 每次路由调用前调用：TTL 内零开销；超时或签名变化时重建链（自定义 → z-ai 兜底） */
 async function ensureChainsFresh(): Promise<void> {
@@ -171,6 +197,10 @@ async function ensureChainsFresh(): Promise<void> {
       audioTtsChain.push(...built.audio, zaiTtsProvider)
       videoShotChain.length = 0
       videoShotChain.push(...built.video, zaiVideoProvider)
+      rotationGroups.text = built.groups.text
+      rotationGroups.image = built.groups.image
+      rotationGroups.audio = built.groups.audio
+      rotationGroups.video = built.groups.video
       chainSyncState = { sig, at: now }
     } finally {
       chainSyncInflight = null
@@ -194,6 +224,88 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+// ---------- 限速感知调度（双免费额度动态利用，2026-10-07） ----------
+// 官方限速（wiki.agnes-ai.com tokenplan.md，免费 default 用户，文本 RPM 已减半）：
+//   文本实际 RPM 10；图片 1K 档 RPM 10（768x1344 自动归一到 1K/9:16）；视频 RPM 1 + 每日秒数配额；
+//   429 官方处置口径 = 等待 1 分钟。agnes-com / agnes-cn 双站点额度独立 → 轮转 + 冷却把
+//   有效吞吐翻倍并避开 429 风暴（§0.5.5 P0 的根因之一正是 image 429 重试耗尽）。
+// 三层策略：
+//   1) 同优先级自定义 provider 逐调用轮转（round-robin）——均匀消耗两家免费额度；
+//   2) 命中 429/限流/队列满 → 该 provider 冷却（默认 60s，IMAGINEOS_RATE_COOLDOWN_MS 可调），
+//      冷却者排链尾（仍可作最后手段，不作弊式拉黑）；
+//   3) 非末位候选命中限速 → 立即让位下一候选（不烧 3 次指数退避加重限流）；
+//      末位候选保留原退避重试（单链场景等待恢复）。
+
+const RATE_COOLDOWN_MS = Number(process.env.IMAGINEOS_RATE_COOLDOWN_MS ?? 60_000)
+const rateCooldowns = new Map<string, number>() // providerId → 冷却截止 epoch ms
+const rotationOffsets: Record<string, number> = {} // capability → 调用计数（轮转偏移取模）
+
+function isRateLimited(e: unknown): boolean {
+  const msg = e instanceof Error ? e.message : String(e)
+  return /\b429\b|rate.?limit|too many requests|video_queue_full|队列满|限流/i.test(msg)
+}
+
+export interface CandidateOrdering {
+  /** 同优先级轮转组（每组 ≥2 个 provider id） */
+  rotationGroups?: string[][]
+  /** 轮转偏移（按调用计数传入） */
+  rotationOffset?: number
+  /** providerId → 冷却截止 epoch ms */
+  cooldowns?: Map<string, number>
+  now?: number
+}
+
+/** 纯函数（导出供单测）：轮转 + 冷却重排候选链。轮转仅重排组内相对次序，不越过组外位置。 */
+export function orderCandidates<T extends { id: string }>(chain: T[], opts: CandidateOrdering = {}): T[] {
+  let ordered = [...chain]
+  for (const group of opts.rotationGroups ?? []) {
+    if (group.length < 2) continue
+    const ids = new Set(group)
+    const members = ordered.filter((p) => ids.has(p.id))
+    if (members.length < 2) continue
+    const offset = Math.abs(opts.rotationOffset ?? 0) % members.length
+    if (offset === 0) continue
+    const rotated = [...members.slice(offset), ...members.slice(0, offset)]
+    let i = 0
+    ordered = ordered.map((p) => (ids.has(p.id) ? rotated[i++]! : p))
+  }
+  const now = opts.now ?? Date.now()
+  const cd = opts.cooldowns
+  if (cd && cd.size > 0) {
+    const cooling = ordered.filter((p) => (cd.get(p.id) ?? 0) > now)
+    if (cooling.length > 0 && cooling.length < ordered.length) {
+      ordered = [...ordered.filter((p) => (cd.get(p.id) ?? 0) <= now), ...cooling]
+    }
+  }
+  return ordered
+}
+
+/** 组装一次调用的候选次序（轮转偏移随每次调用递增 → 双额度交替消耗） */
+function candidatesFor<T extends { id: string }>(capability: string, chain: T[]): T[] {
+  const ordered = orderCandidates([...chain], {
+    rotationGroups: rotationGroups[capability],
+    rotationOffset: rotationOffsets[capability] ?? 0,
+    cooldowns: rateCooldowns,
+  })
+  rotationOffsets[capability] = (rotationOffsets[capability] ?? 0) + 1
+  return ordered
+}
+
+/** 运维/测试可观测：当前仍在冷却的 provider 快照 */
+export function rateCooldownSnapshot(): Array<{ providerId: string; untilEpochMs: number }> {
+  const now = Date.now()
+  return [...rateCooldowns.entries()]
+    .filter(([, until]) => until > now)
+    .map(([providerId, untilEpochMs]) => ({ providerId, untilEpochMs }))
+}
+
+/** 还原限速调度状态（resetRegistry/clearRegistry 调用，防测试间污染） */
+function clearRateState(): void {
+  rateCooldowns.clear()
+  for (const k of Object.keys(rotationOffsets)) delete rotationOffsets[k]
+  for (const k of Object.keys(rotationGroups)) delete rotationGroups[k]
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   return Promise.race([
     p,
@@ -214,6 +326,7 @@ async function runWithRetry<P, R>(
   provider: { id: string; model: string; execute(payload: P, ctx: ProviderCallContext): Promise<R> },
   payload: P,
   ctx: ProviderCallContext,
+  opts?: { failFastOnRateLimit?: boolean },
 ): Promise<R> {
   let lastError: unknown = null
   for (let attempt = 1; attempt <= MAX_ATTEMPTS_PER_PROVIDER; attempt++) {
@@ -251,6 +364,11 @@ async function runWithRetry<P, R>(
         error: message,
         latencyMs,
       })
+      if (isRateLimited(e)) {
+        // 限速命中：记录冷却（下一次调用起排链尾）；非末位候选立即让位，不烧退避重试加重限流
+        rateCooldowns.set(provider.id, Date.now() + RATE_COOLDOWN_MS)
+        if (opts?.failFastOnRateLimit) break
+      }
       if (isNonRetryable(e)) break // 确定性失败：重试无意义，立即降级到下一候选
       if (attempt < MAX_ATTEMPTS_PER_PROVIDER) {
         await sleep(BASE_BACKOFF_MS * 2 ** (attempt - 1))
@@ -269,10 +387,12 @@ export const router = {
   ): Promise<{ result: TextPlanResult; providerId: string; model: string; latencyMs: number }> {
     await ensureChainsFresh()
     if (textPlanChain.length === 0) throw new ProviderExhaustedError('text.plan', [{ providerId: '(none)', error: '无注册 provider（测试环境？）' }])
+    const candidates = candidatesFor('text', textPlanChain)
     const attempts: Array<{ providerId: string; error: string }> = []
-    for (const provider of [...textPlanChain]) {
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i]!
       try {
-        const result = await runWithRetry('text.plan', provider, payload, ctx)
+        const result = await runWithRetry('text.plan', provider, payload, ctx, { failFastOnRateLimit: i < candidates.length - 1 })
         return { result, providerId: provider.id, model: provider.model, latencyMs: 0 }
       } catch (e) {
         attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })
@@ -287,10 +407,12 @@ export const router = {
   ): Promise<{ result: ImageShotResult; providerId: string; model: string }> {
     await ensureChainsFresh()
     if (imageShotChain.length === 0) throw new ProviderExhaustedError('image.shot', [{ providerId: '(none)', error: '无注册 provider' }])
+    const candidates = candidatesFor('image', imageShotChain)
     const attempts: Array<{ providerId: string; error: string }> = []
-    for (const provider of [...imageShotChain]) {
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i]!
       try {
-        const result = await runWithRetry('image.shot', provider, payload, ctx)
+        const result = await runWithRetry('image.shot', provider, payload, ctx, { failFastOnRateLimit: i < candidates.length - 1 })
         return { result, providerId: provider.id, model: provider.model }
       } catch (e) {
         attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })
@@ -305,10 +427,12 @@ export const router = {
   ): Promise<{ result: AudioTTSResult; providerId: string; model: string }> {
     await ensureChainsFresh()
     if (audioTtsChain.length === 0) throw new ProviderExhaustedError('audio.tts', [{ providerId: '(none)', error: '无注册 provider' }])
+    const candidates = candidatesFor('audio', audioTtsChain)
     const attempts: Array<{ providerId: string; error: string }> = []
-    for (const provider of [...audioTtsChain]) {
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i]!
       try {
-        const result = await runWithRetry('audio.tts', provider, payload, ctx)
+        const result = await runWithRetry('audio.tts', provider, payload, ctx, { failFastOnRateLimit: i < candidates.length - 1 })
         return { result, providerId: provider.id, model: provider.model }
       } catch (e) {
         attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })
@@ -323,10 +447,12 @@ export const router = {
   ): Promise<{ result: VideoShotResult; providerId: string; model: string }> {
     await ensureChainsFresh()
     if (videoShotChain.length === 0) throw new ProviderExhaustedError('video.shot', [{ providerId: '(none)', error: '无注册 provider' }])
+    const candidates = candidatesFor('video', videoShotChain)
     const attempts: Array<{ providerId: string; error: string }> = []
-    for (const provider of [...videoShotChain]) {
+    for (let i = 0; i < candidates.length; i++) {
+      const provider = candidates[i]!
       try {
-        const result = await runWithRetry('video.shot', provider, payload, ctx)
+        const result = await runWithRetry('video.shot', provider, payload, ctx, { failFastOnRateLimit: i < candidates.length - 1 })
         return { result, providerId: provider.id, model: provider.model }
       } catch (e) {
         attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })

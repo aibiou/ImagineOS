@@ -68,3 +68,19 @@ create(image_url=dataURL, prompt, quality=speed|quality, size)
 ## 7. 扩展方式
 
 接入新模型 = 实现 Provider 接口 + `registerProvider()` 注册，业务层零改动。这是 M0 落地 Model Router 的验证目标，已在 M1.5 用 `video.shot` 真实验证（cogvideox-3 接入未改任何 core 文件）。
+
+## 8. 限速感知调度（双免费额度动态利用，2026-10-07）
+
+**背景**：agnes-com（apihub.agnes-ai.com）与 agnes-cn（api.agnes-ai.cn）双站点免费额度独立，但免费档限速严格（官方 tokenplan.md：文本实际 RPM 10、图片 1K 档 RPM 10、视频 RPM 1 + 每日秒数配额；429 官方处置口径 = 等 1 分钟）。§0.5.5 的 P0 事故根因之一正是 image 429 重试耗尽——单站点打满即全线失败。
+
+**调度策略（registry.ts，三层）**：
+
+1. **同优先级轮转**：同通道同优先级且启用的自定义 provider ≥2 个 → 轮转组；每次路由调用偏移 +1，组内起始位交替（agnes-com ↔ agnes-cn）→ 两家额度各承担约一半流量，等效吞吐翻倍。组信息由 `buildChainsFromConfigs` 随链重建计算（TTL 3s），配置改动即时生效。
+2. **限速冷却**：错误匹配 `429 / rate limit / too many requests / video_queue_full / 队列满 / 限流` → 该 provider 冷却 60s（`IMAGINEOS_RATE_COOLDOWN_MS` 可调）；冷却者排候选链尾（仍可作最后手段，不作弊式拉黑；全员冷却时维持原序照常尝试）。
+3. **快速让位**：非末位候选命中限速 → 跳过剩余退避重试立即切换下一候选（不烧 1.8s 退避、不加重限流）；**末位候选例外**：保留 3 次指数退避（单链场景等待恢复——zai-tts 无备选，实测曾 2 次瞬时失败后第三次成功）。
+
+**与优先级语义的关系**：不同 priority 仍严格按升序（轮转只发生在同优先级组内）；z-ai 内置兜底恒在链尾，永不参与轮转。测试环境不注入轮转组（保持链序确定性），`resetRegistry()/clearRegistry()` 清空冷却与偏移防污染。
+
+**验证**（2026-10-07 实测）：单测 12 项（orderCandidates 纯函数 7 + router 行为 5，97/97 全绿）；全链 E2E 13/13——真实创作一件（150s 至 READY），Generation 记账双通道分布：LLM cn:4/com:3、图片 cn:3/com:2，零限速失败。
+
+**运维口径**：`node scripts/m15/probe-channels-now.mjs`（LLM 逐行 + TTS，近零消耗）；`--full` 追加 Image（每行 1 张）与 Video 队列（每行 4s 每日额度）探测。

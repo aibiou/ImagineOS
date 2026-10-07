@@ -58,6 +58,20 @@ checks.push([`意图 totalShots 与产物镜头数一致（${payload?.totalShots
 const content = await db.content.findUnique({ where: { id: contentId } })
 checks.push(['content.status=READY（全链无回归）', content?.status === 'READY'])
 
+// 4. 双免费额度轮转实证：该创作的 Generation 记账按 provider 分布（agnes-cn / agnes-com 均应出现）
+const genRows = await db.generation.findMany({ where: { contentId }, select: { type: true, provider: true, status: true } })
+const dist = {}
+for (const g of genRows) {
+  const k = `${g.type} | ${g.provider} | ${g.status}`
+  dist[k] = (dist[k] ?? 0) + 1
+}
+console.log('   Generation provider 分布（轮转证据）：')
+for (const [k, n] of Object.entries(dist)) console.log(`     ${k}: ${n}`)
+const imageProviderSet = new Set(genRows.filter((g) => g.type === 'image.shot' && g.status === 'succeeded').map((g) => g.provider))
+checks.push([`图片调用双通道分布（${[...imageProviderSet].join(' + ')}）`, imageProviderSet.size >= 2])
+const llmProviderSet = new Set(genRows.filter((g) => g.type === 'text.plan' && g.status === 'succeeded').map((g) => g.provider))
+checks.push([`LLM 调用双通道分布（${[...llmProviderSet].join(' + ')}）`, llmProviderSet.size >= 2])
+
 for (const [name, ok] of checks) {
   console.log(`   ${ok ? '✓' : '✗'} ${name}`)
   if (ok) pass++

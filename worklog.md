@@ -441,3 +441,23 @@ Stage Summary:
 - R2（死字段陷阱）已通过根 README + ADR-0001 附录显性化，防未来开发者误设 motion 字段
 - 方案 3（motion 写入点产品化）按建议留 M2 裁决，未实施
 - M2 冻结例外依据：测试执行期可观测性缺陷（与 §0.5.5/§0.5.6 同类）；评估标准零修改
+
+---
+Task ID: gate7-rate-aware-005
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令——读 Agnes 官方文档确认免费额度限速；已配置 agnes-cn + agnes-com 双 provider，要求动态利用双免费额度防限速
+
+Work Log:
+- 官方文档取证（wiki.agnes-ai.com，Mintlify .md 源约定）：tokenplan.md 免费档实际限速 = 文本 RPM 10（2026-09-23 减半公告）/ 图片 1K 档 RPM 10（768x1344 自动归一 1K/9:16）/ 视频 RPM 1 + 每日秒数配额；429 官方处置口径 = 等 1 分钟；code.md 确认 429 语义。video-25-flash.md 确认轮询协议为 origin 级 /agnesapi（cn 站推导 api.agnes-ai.cn/agnesapi，待队列窗口验证）
+- DB 确认用户已配置 6 行：agnes-com + agnes-cn × llm/image/video，全部 priority=10 enabled；agnes-cn 实测 LLM ✅（200，532ms）/ Image ✅（200，URL 形态，adapter 兼容）
+- 实现（src/ai/router/registry.ts 三层策略）：①同优先级轮转——buildChainsFromConfigs 计算 groups（同通道同优先级且有效 ≥2），ensureChainsFresh 存 rotationGroups，每次路由调用 candidatesFor 偏移+1 交替起始位 ②限速冷却——isRateLimited 匹配 429/rate limit/too many requests/video_queue_full/队列满/限流 → 冷却 60s（IMAGINEOS_RATE_COOLDOWN_MS 可调）排链尾（全员冷却维持原序）③快速让位——runWithRetry 新增 opts.failFastOnRateLimit：非末位候选限速即 break 不烧退避；末位保留 3 次退避（单链等待恢复）；resetRegistry/clearRegistry 调 clearRateState 防测试污染；导出 orderCandidates 纯函数 + rateCooldownSnapshot 可观测
+- 测试：tests/rate-aware-routing.test.ts +12（orderCandidates 纯函数 7：轮转/取模归零/冷却排尾/过期恢复/全员冷却/脏容错/叠加；router 行为 5：快速让位计时断言/冷却让位/末位 3 次退避/非限速行为不变）——97/97 全绿；typecheck ✓（修 noUncheckedIndexedAccess 4 处索引断言）lint ✓
+- probe-channels-now.mjs 重构：逐行探测（此前误标 agnes LLM 实为 zai-chat、video 只探第一行）；默认 LLM 逐行 + z-ai TTS（近零消耗），--full 追加 Image（每行 1 张）/ Video 队列（每行 4s 每日额度）并注明成本；实测 agnes-com LLM ✅ 2710ms / agnes-cn LLM ✅ 532ms
+- E2E 实证（verify-mode-decision.mjs 增双通道分布断言，dev server 重启后跑两次全链）：13/13 通过（150s 至 READY + mode.decision 11 项 + 新增 2 项），Generation 记账分布 LLM cn:4/com:3、图片 cn:3/com:2——轮转在真实生产路径生效零限速失败；2 次 zai-tts 瞬时失败被末位退避重试救回（策略例外分支实测命中）
+- 文档：ai-model-layer.md 新增 §8（限速感知调度：背景/三层策略/优先级语义关系/验证/运维口径）；m15-human-test-report.md 新增 §0.5.8（背景/落地表/验证/对 Gate 7 影响：双被试并发下 429 中止条件触发概率显著下降）；README 技术栈段补双额度轮转说明
+
+Stage Summary:
+- 用户目标达成：agnes-com/agnes-cn 双免费额度在 LLM/图片（视频同理）通道逐调用轮转分摊，429/队列满自动冷却让位，等效吞吐翻倍且避开 429 风暴
+- 官方限速口径全部写入代码注释与文档（RPM 数值/429 处置/每日配额），后续调优有据可依
+- 评估标准零修改；M2 冻结例外依据：测试执行期可靠性加固（§0.5.5 P0 根因即 provider 限速）
+- 遗留：agnes-cn 视频轮询路径（api.agnes-ai.cn/agnesapi）为文档推导，待队列窗口用 probe --full 实测

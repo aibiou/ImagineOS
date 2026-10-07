@@ -43,4 +43,4 @@ bun run test          # Vitest 全量门禁
 bun run lint && bun run typecheck
 ```
 
-环境变量见 `.env`（`DATABASE_URL`）；自定义 Provider（openai-compat 形态的 LLM / Image / Video）在数据库 `ModelProviderConfig` 表配置，运行时动态生效，无需重启。
+环境变量见 `.env`（`DATABASE_URL`）；自定义 Provider（openai-compat 形态的 LLM / Image / Video）在数据库 `ModelProviderConfig` 表配置，运行时动态生效，无需重启。同优先级的多家 Provider（如 agnes-com + agnes-cn 双免费额度）自动轮转分摊流量，429/队列满自动冷却让位（详见 `docs/architecture/ai-model-layer.md` §8）。
