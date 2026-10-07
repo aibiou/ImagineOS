@@ -237,6 +237,8 @@
 | 2 | 限速冷却（429/queue_full → 60s 排链尾，IMAGINEOS_RATE_COOLDOWN_MS 可调） | 限速者让位不拉黑，恢复即归队 |
 | 3 | 非末位候选快速让位（跳过退避重试）；末位保留 3 次退避 | 双站点互为灾备；单链（zai-tts）仍等待恢复 |
 
-**验证**（全部真实执行）：单测 +12 → 97/97；typecheck ✓ lint ✓；全链 E2E 13/13（150s 至 READY），**Generation 记账双通道分布：LLM agnes-cn:4 / agnes-com:3，图片 agnes-cn:3 / agnes-com:2**——轮转在真实生产路径生效，零限速失败；期间 2 次 zai-tts 瞬时失败由末位退避重试救回（策略第 3 层的例外分支实测命中）。探测脚本升级为逐行探测（默认 LLM+TTS 近零消耗；--full 追加 Image/Video，注明额度成本）。
+**验证**（全部真实执行）：单测 +12 → 97/97；typecheck ✓ lint ✓；全链 E2E 13/13（150s 至 READY），**Generation 记账双通道分布：LLM agnes-cn:4 / agnes-com:3，图片 agnes-cn:3 / agnes-com:2**——轮转在真实生产路径生效，零限速失败；期间 2 次 zai-tts 瞬时失败由末位退避重试救回（策略第 3 层的例外分支实测命中）。探测脚本升级为逐行探测（默认 LLM+TTS 近零消耗；--full 追加 Image/Video，注明额度成本；--video 仅 Video 最小额度模式）。
+
+**agnes-cn 视频链路实测补充**（2026-10-07 06:44）：①提交端点真实可达——双站点队列均满返回 503（agnes-com 英文 `video queue is full` / agnes-cn 中文「视频队列已满」，独立部署各自本地化；R1 队列满事实延续，两站点探测时点均无窗口）；②轮询路径 `api.agnes-ai.cn/agnesapi` 由文档推导转为实测坐实——零额度探测（GET 假 video_id，`scripts/m15/probe-video-poll-path.mjs`）返回 JSON 协议体「任务不存在」，与 com 站 `task not found` 同构；③中文限速消息兼容性确认——错误消息传播链携带响应体，`isRateLimited` 对 `video_queue_full` 与「队列满」双重命中，agnes-cn 冷却让位行为与 com 站一致。native 样本采集（全镜 Golden Case 重跑）仍待任一站点队列窗口。
 
 **对 Gate 7 的影响**：测试日双被试并发创作（§0.5.5 事故形态）下，图片/LLM 流量由两家免费额度分摊 + 429 自动冷却让位——「三通道任一长冷却」的中止条件触发概率显著下降；Provider 配额状态行（§1）建议记录双站点各自的探测结果。评估标准零修改（M2 冻结例外：测试执行期可靠性加固，与 §0.5.5 同族——其根因即 provider 限速）。

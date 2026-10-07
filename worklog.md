@@ -461,3 +461,23 @@ Stage Summary:
 - 官方限速口径全部写入代码注释与文档（RPM 数值/429 处置/每日配额），后续调优有据可依
 - 评估标准零修改；M2 冻结例外依据：测试执行期可靠性加固（§0.5.5 P0 根因即 provider 限速）
 - 遗留：agnes-cn 视频轮询路径（api.agnes-ai.cn/agnesapi）为文档推导，待队列窗口用 probe --full 实测
+
+---
+Task ID: gate7-video-path-006
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「继续」——闭合 gate7-rate-aware-005 的遗留项：agnes-cn 视频轮询路径（api.agnes-ai.cn/agnesapi）为文档推导，需实测验证
+
+Work Log:
+- 上下文恢复：git 核实 15d943c（限速感知调度）已提交、工作区干净；registry.ts 三层策略（rotationGroups 轮转 / RATE_COOLDOWN_MS 冷却 / failFastOnRateLimit 快速让位）与四通道调用点全部在位；vitest 97/97 复核全绿（--reporter=basic 参数在该版本不可用，改默认 reporter，非代码问题）
+- probe-channels-now.mjs 新增 --video 最小额度模式（跳过 TTS/LLM/Image，仅 Video 队列逐行——Image 各耗 1 张额度无需复跑，符合免费额度最佳利用原则）
+- 实测一（提交端点，每行耗 4s 每日额度）：agnes-com 503 英文 video_queue_full / agnes-cn 503 中文「视频队列已满，请稍后重试」——cn 提交端点 api.agnes-ai.cn/v1/videos 真实可达（业务化 503 而非 DNS/404/鉴权失败），双站点独立部署、消息各自本地化；R1 队列满事实延续，两站点探测时点均无窗口
+- 实测二（轮询路径，零额度）：新建 scripts/m15/probe-video-poll-path.mjs（GET {origin}/agnesapi?video_id=假id，不提交任务不耗每日配额）——agnes-com 返回 {"error":{"code":404,"message":"task not found"}} / agnes-cn 返回 {"error":{"code":404,"message":"任务不存在"}}，双站点 PATH_OK，轮询路径由文档推导转为实测坐实
+- 兼容性核查（读码推演）：request() 错误对象携带响应体前 300 字符 → executeVideoAgnes 抛「[自定义视频 label] 提交失败：HTTP 503：{"code":"video_queue_full","message":"视频队列已满…"}」→ isRateLimited 正则对 video_queue_full 与「队列满」双重命中 → 中文消息冷却让位行为与英文站一致，无需代码改动
+- 文档：ai-model-layer.md §8 新增「agnes-cn 视频链路实测」段 + 运维口径补 --video 与 probe-video-poll-path.mjs；m15-human-test-report.md §0.5.8 新增「agnes-cn 视频链路实测补充」段（三点：提交端点/轮询路径坐实/中文消息兼容）
+- 门禁：lint ✓ typecheck ✓（src/ 零改动，纯脚本+文档；vitest 97/97 前置复核）
+
+Stage Summary:
+- gate7-rate-aware-005 遗留项闭合：agnes-cn 视频全链路（提交 /v1/videos + 轮询 /agnesapi + 鉴权）实测确认，协议与 com 站同构仅消息本地化；中文限速消息在既有冷却正则覆盖内，零代码改动
+- 新事实入档：agnes 双站点视频队列 2026-10-07 06:44 时点均满（R1 延续），native 样本采集（全镜 Golden Case 重跑）仍待任一站点队列窗口——与 §0.5.7 口径一致
+- 新工具：probe-video-poll-path.mjs（零额度轮询路径探测）+ probe-channels-now.mjs --video（最小额度视频模式）
+- 推送状态：15d943c 及本次 commit 均在本地 main，远端推送需产品负责人提供临时 token（无凭据不可推）

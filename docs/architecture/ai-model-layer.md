@@ -83,4 +83,6 @@ create(image_url=dataURL, prompt, quality=speed|quality, size)
 
 **验证**（2026-10-07 实测）：单测 12 项（orderCandidates 纯函数 7 + router 行为 5，97/97 全绿）；全链 E2E 13/13——真实创作一件（150s 至 READY），Generation 记账双通道分布：LLM cn:4/com:3、图片 cn:3/com:2，零限速失败。
 
-**运维口径**：`node scripts/m15/probe-channels-now.mjs`（LLM 逐行 + TTS，近零消耗）；`--full` 追加 Image（每行 1 张）与 Video 队列（每行 4s 每日额度）探测。
+**agnes-cn 视频链路实测**（2026-10-07 06:44，两段证据）：①提交端点 `api.agnes-ai.cn/v1/videos` 真实可达——队列满时返回本地化业务错误（中文「视频队列已满，请稍后重试」；同期 agnes-com 为英文 `video queue is full`，两站点独立部署、消息各自本地化）；②轮询路径 `api.agnes-ai.cn/agnesapi` 零额度坐实——GET 假 video_id 返回 JSON 协议体（`{"error":{"code":404,"message":"任务不存在"}}`，与 com 站 `task not found` 同构），此前为文档推导，现已实测确认。中英文错误消息均命中冷却正则（`video_queue_full` 与「队列满」双保险）。视频队列两站点探测时点均满（R1 事实延续），native 样本采集仍待队列窗口。
+
+**运维口径**：`node scripts/m15/probe-channels-now.mjs`（LLM 逐行 + TTS，近零消耗）；`--full` 追加 Image（每行 1 张）与 Video 队列（每行 4s 每日额度）探测；`--video` 仅 Video 队列（最小额度验证轮询路径）。另有零额度轮询路径探测：`node scripts/m15/probe-video-poll-path.mjs`（GET 假 video_id，不提交任务不耗每日配额）。
