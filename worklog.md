@@ -420,3 +420,24 @@ Stage Summary:
 - video.storyboard 是所有生成的唯一 Job 类型（native/composition 是 Job 内逐镜头选择），该证据本身不构成 composition 证明——shotAssets 零 videoAssetId + 零 video.shot 记账才是
 - 新增风险事实：native 通道历史成功率 1/28（3.6%），agnes-video lastTest=untested——「可用」与「可靠」之间有明显距离
 - 最小修复方案已列 4 档（零改动/README/路由决策日志/死字段写入点），全部留给产品负责人裁决，本 session 未实施任何一项
+
+---
+Task ID: gate7-audit-followup-004
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「继续」——执行审计报告的最小修复方案（跳过方案 0 零改动与方案 3 留 M2）：通道健康探测 + 方案 1（README/ADR 备注）+ 方案 2（路由决策日志）
+
+Work Log:
+- 通道探测：probe-channels-now.mjs 扩展 agnes-video 段（提交 4s 视频 + 轮询 ≤90s，不下载成品；首帧取 storage 现成镜头图）——TTS ✅ 727ms / LLM ✅ 367ms / agnes-video ❌ 503 video_queue_full（队列仍满，与 M1.5 Phase B 同状）→ R1 坐实为当前事实，Gate 7 维持 composition 默认正确
+- 方案 2：新建 src/core/content/storyboard-mode.ts（storyboardModeDecision 纯函数，与 motionModeFor 同口径：forceNative→native / motionShots=0→composition / 部分→hybrid / 全部→native）；pipeline-executor executeStoryboardJob 开头写 Provenance mode.decision 事件（意图口径，含 videoProviderAvailable；产物口径仍 computeGenerationMode，两者差异=回落证据）；行为零变化纯观测
+- 方案 1：新建仓库根 README.md（产品一句话 / 双路径架构表 / 当前默认 composition 与依据 / restart-dev.sh 切换方式 / 死字段警示 / 文档导航 / 技术栈运行）；ADR-0001 追加「附录：实施现状备注」（四条：FORCE_NATIVE 仅评估脚本注入 / motion 零写入点死字段 / Alpha 现状=判定 C 与 M2 入口 / R3 观测性补齐说明）
+- 测试：tests/storyboard-mode-decision.test.ts +6（真实用户形态/Gate 6b 开关/hybrid/native/显式 composition/空数组）
+- 门禁：vitest 85/85 全绿；typecheck ✓（清 tsbuildinfo 全量）；lint ✓
+- dev server 以 composition 模式重启加载新 worker 代码；全链真实生成实测 verify-mode-decision.mjs（116s 至 READY）：11/11 断言通过（事件字段 7 项 + 产物口径一致 6 镜零回落 + READY 无回归），验证数据清理（content+匿名 user 级联删除，残留事件 0）
+- 文档：m15-human-test-report 新增 §0.5.7（审计结论 + 四项落地表 + 验证记录 + 对 Gate 7 影响：nativeConfig 此后直读 mode.decision 事件）
+
+Stage Summary:
+- 审计 R3（composition 零路由记录）已闭合：此后每件作品生成时必有 mode.decision 事件，观察员不再需要零记账反推
+- R1 事实更新：agnes-video 队列探测时点仍满（503），native 样本采集需等队列窗口——已写入 §0.5.7 供产品负责人决策
+- R2（死字段陷阱）已通过根 README + ADR-0001 附录显性化，防未来开发者误设 motion 字段
+- 方案 3（motion 写入点产品化）按建议留 M2 裁决，未实施
+- M2 冻结例外依据：测试执行期可观测性缺陷（与 §0.5.5/§0.5.6 同类）；评估标准零修改

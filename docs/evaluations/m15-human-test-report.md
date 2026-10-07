@@ -134,6 +134,23 @@
 
 **对 Gate 7 的影响**：被试将看到每个作品的生成模式徽章——「AI 图像 + 运镜合成」与「AI 视频生成」的区分对首反应编码是重要上下文（被试不应把合成形态误读为 AI 视频模型能力）。观察员无需主动解释；被试问「这是 AI 视频吗」时按徽章口径回答。§1 运动路径配置行仍如实记录测试时段的 FORCE_NATIVE 状态。
 
+### 0.5.7 Video Pipeline Audit 与路由决策日志（2026-10-07 05:00，产品负责人指令）
+
+§0.5.6 之后产品负责人要求正式 Video Pipeline Audit（只读不改，`download/video-pipeline-audit-report.md`）。审计结论与 §0.5.6 一致且更完整：三态判定 **C**；归因 = **产品设计如此（ADR-0001 Rev.2「调度策略 M2 再定」）+ 配置默认如此**（FORCE_NATIVE 空 + motion 死字段），非 fallback 非代码错误；`job.type=video.storyboard` 是所有生成的唯一类型，不构成形态证据。新增事实：native 通道历史成功率 1/28（3.6%），且探测时点（10-07 05:00）agnes-video 队列仍满（503 video_queue_full）——**Gate 7 维持 composition 默认是正确决定，native 样本采集需等队列窗口**。
+
+**审计后落地（M2 冻结例外：测试执行期可观测性缺陷，与 §0.5.5/§0.5.6 同类）**：
+
+| # | 内容 | 位置 |
+|---|------|------|
+| 1 | 路由决策事件：storyboard Job 执行开头写 Provenance `mode.decision`（mode/forceNative/motionShots/totalShots/videoProviderAvailable，意图口径） | core/content/storyboard-mode.ts（纯函数）+ workers/pipeline-executor.ts |
+| 2 | 观察员探针：probe-channels-now.mjs 新增 agnes-video 队列探测（提交+轮询，不下载成品） | scripts/m15/probe-channels-now.mjs |
+| 3 | 仓库根 README：双路径架构、当前默认 composition、切换方式、死字段警示 | README.md（新建） |
+| 4 | ADR-0001 附录：实施现状备注（FORCE_NATIVE 仅评估脚本注入 / motion 零写入点 / M2 正规入口） | docs/decisions/ADR-0001 |
+
+**验证**：单测 +6 → 85/85 全绿；typecheck ✓ lint ✓；全链真实生成实测（verify-mode-decision.mjs，116s 至 READY）11/11 断言通过——事件字段正确、意图口径与产物口径一致（6 镜零回落）、全链无回归；验证数据已清理（content+匿名 user 级联删除，零残留）。
+
+**对 Gate 7 的影响**：§5 nativeConfig 行此后可直接读 Provenance `mode.decision` 事件（不再需要零记账反推）；composition 产物每件都有决策记录，观察员核查成本降为零。评估标准仍零修改。
+
 ---
 
 ## 1. 测试执行概况（人工填写）

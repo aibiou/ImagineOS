@@ -89,3 +89,14 @@ Shot.motion = native             → image.shot 生成首帧 → video.shot 图�
 - 版本配方（ShotSnapshot）新增可选 `motion` 字段，旧配方零迁移（缺省 composition）；
 - Native 路径成本/延迟约为组合式的 3–5 倍（60s/镜 vs 15s/镜），调度策略在 M2 按用户分层再定；
 - Visual Quality Eval 从"组合式基线"升级为"双路径对比"，cogvideox 首帧一致性成为新的评测维度。
+
+---
+
+## 附录：实施现状备注（2026-10-07，Video Pipeline Audit 补录）
+
+Rev.2 定义的调度点，当前实际状态（审计证据：`download/video-pipeline-audit-report.md`）：
+
+1. **`IMAGINEOS_FORCE_NATIVE`（评估开关）**：仅 `scripts/m15/restart-dev.sh native` 注入，dev server 进程级环境变量，默认空。生产用户路径从不设置。
+2. **`Shot.motion`（配方字段）**：⚠️ **死字段——schema 已定义（schemas.ts:63），但全系统零写入点**。plan-service 密封配方只写 cameraMotion / durationMs / narrationLine / emotion；story.ts 的 LLM 输出 schema 不含 motion；无任何 API 接受该字段。也就是说 Rev.2 图中的 `Shot.motion = native` 分支目前**只能由评估开关触发**，不存在产品侧入口。
+3. **由此形成的 Alpha 现状**：所有真实用户生成 = 默认 composition（三态判定 C）。这与 Rev.2「调度策略在 M2 按用户分层再定」一致——不是实现偏差，是调度策略尚未开始建设。给 `motion` 字段建设写入点（创作页开关 / 分层调度 / provider 健康度降级）是 M2 的正规入口，届时应先给本字段补测试再启用。
+4. **观测性补齐（Audit R3）**：storyboard Job 现在会在执行开头写 Provenance `mode.decision` 事件（`src/core/content/storyboard-mode.ts`，意图口径；产物口径仍以 computeGenerationMode 为准，两者差异 = 回落证据）。native-fallback 事件自 Gate 6 起就有；缺的是 composition 路径的决策记录，现已补。

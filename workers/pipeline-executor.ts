@@ -19,6 +19,7 @@ import { versionRepo } from '@/core/repositories/version-repo'
 import { contentService } from '@/core/content/content-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core/content/schemas'
+import { storyboardModeDecision } from '@/core/content/storyboard-mode'
 import { composeVideo, cleanupWorkDir } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
 import { db } from '@/lib/db'
@@ -109,6 +110,19 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   const shots = allShots(structure)
   if (shots.length === 0) throw new Error('配方中没有镜头（先完成分镜）')
   const size = imageSizeFor(structure)
+
+  // ---- 路由决策日志（审计 R3）：composition 路径此前零记录，产物形态只能靠零记账反推 ----
+  // 意图口径；实际产物以 computeGenerationMode（shotAssets）为准，两者差异 = 回落证据
+  const modeDecision = storyboardModeDecision(shots, process.env.IMAGINEOS_FORCE_NATIVE === '1')
+  await provenanceRepo.append(db, {
+    contentId: content.id,
+    versionId: version.id,
+    eventType: 'ai_generated',
+    actorType: 'system',
+    provider: 'pipeline',
+    model: 'mode-decision',
+    payload: { stage: 'mode.decision', ...modeDecision, videoProviderAvailable: hasVideoShotProvider() },
+  })
 
   const shotAssets: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string }> = []
 
