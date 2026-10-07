@@ -908,7 +908,14 @@ function GeneratingStage({
                 <div key={i} className={`relative aspect-[9/16] overflow-hidden rounded-lg border ${url ? 'border-fuchsia-400/30' : 'border-white/10 bg-zinc-900'}`}>
                   {url ? (
                      
-                    <img src={url} alt={`第 ${i + 1} 个镜头`} className="h-full w-full object-cover" />
+                    <motion.img
+                      initial={{ opacity: 0, scale: 0.96 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: 0.35 }}
+                      src={url}
+                      alt={`第 ${i + 1} 个镜头`}
+                      className="h-full w-full object-cover"
+                    />
                   ) : (
                     <div className="flex h-full w-full items-center justify-center">
                       <div className="size-4 animate-pulse rounded-full bg-zinc-700" />

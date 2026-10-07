@@ -273,3 +273,18 @@
 **对 Gate 7 的影响（如实告知被试与记录）**：生成时长预期从 ~15s/镜升至 ~60–250s/镜（队列窗口依赖），全片 5–10 分钟属正常；队列满/额度耗尽时部分镜回落 composition（hybrid）或全回落（composition），产物标签如实显示——回落是兜底行为非缺陷，被试若对形态不满如实记录（这正是 Alpha 要验证的表达链路事实）。每日免费秒数消耗显著上升，双站点额度让位真人测试（§0.5.9 指令延续）。评估标准零修改。
 
 **门禁**：tsc ✓ / eslint ✓ / vitest **104/104**（+3：motionModeFor 单测 3 例 + storyboardModeDecision 重写 6 例）。测试库隔离下跑批，custom.db 零污染。
+
+### 0.5.11 生成进度渐进可见——「黑盒」修复（2026-10-07 13:30，产品负责人截图反馈）
+
+**现象（产品负责人截图实证）**：创作页生成阶段显示「正在绘制镜头画面（2/5）」+ 进度条 ~40%，但下方 5 个镜头格子全部是**黑色占位块**——已完成 2 个镜头的画面用户完全看不到，整个生成过程是黑盒。native-first 翻转（§0.5.10）后该缺口被放大：native 镜头 60–250s/镜，用户要盯黑盒 5–20 分钟。
+
+**根因（链路三处全是「完成前不可见」）**：①worker `reportProgress` 只报 `{stage,current,total,label}`，已完成镜头的资产 ID 不在进度载荷；②creation API 的 `assets.shots` 仅在 storyboard Job **成功后**由 `latestSucceededJob` 填充；③前端 `GeneratingStage` 组件本身已具备渐进渲染能力（`imageByIndex` 有 url 即渲染），但生成中拿不到数据。
+
+**修复（前后端零破坏性，前端组件零改动即生效）**：
+1. **pipeline-executor**：镜头图片保存后**立即**入进度载荷（`shotAssets` 快照，图片秒级到达）；native 视频完成后再上报补齐 `videoAssetId`（视频 60–250s 后到）；进度计数 `current` 口径 = 该镜全部完成（图+视频），进度条不虚高；label 按模式本地化（composition「正在绘制镜头画面」/ native-hybrid「正在生成 AI 视频镜头」）；
+2. **creation API**：storyboard 活跃 Job 的进度载荷含 `shotAssets` 时，透出为 `assets.shots`（imageUrl 经 assetService 解析）——覆盖旧轮次历史资产（regenerate 场景显示本轮渐进而非上一轮旧图）；
+3. **前端**：镜头图 fade-in 动画（0.35s），渐进长出的可感知仪式感；重试期间已见图片不消失（`fail()` 回队保留 outputJson，轮询不闪断）。
+
+**测试**：`tests/progress-visibility.test.ts` 四用例锁定语义——快照持久化 / narration 阶段浅合并不丢已上报资产 / 可重试回队保留 outputJson / complete 全量覆盖终态。门禁：tsc ✓ / eslint ✓ / vitest **108/108**（104 基线 + 4）。
+
+**对 Gate 7 的影响**：被试在生成阶段持续看到镜头画面逐格长出（图片先到、AI 视频后补齐），等待焦虑显著下降；UX 原则五（每步可见）在 native 长生成时段首次完整成立。评估标准零修改。

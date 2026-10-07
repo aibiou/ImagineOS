@@ -101,6 +101,28 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       }
     }
 
+    // 渐进可见（UX 原则五，2026-10-07 用户反馈「怎么黑盒的」）：storyboard 生成中，进度载荷携带
+    // 已完成镜头资产（图片秒级到达、native 视频后到），逐镜渲染替代黑盒占位——覆盖旧轮次的
+    // 历史资产（regenerate 场景显示本轮渐进，而非上一轮旧图）
+    if (activeJob?.type === 'video.storyboard' && activeJob.outputJson) {
+      const progress = JSON.parse(activeJob.outputJson) as {
+        shotAssets?: Array<{ shotIndex: number; imageAssetId: string }>
+      }
+      const partial = Array.isArray(progress.shotAssets) ? progress.shotAssets : []
+      if (partial.length > 0) {
+        const rows = await assetService.getByIds(partial.map((e) => e.imageAssetId))
+        const byId = new Map(rows.map((r) => [r.id, r]))
+        assets.shots = partial
+          .slice()
+          .sort((a, b) => a.shotIndex - b.shotIndex)
+          .map((e) => ({
+            shotIndex: e.shotIndex,
+            imageUrl: byId.has(e.imageAssetId) ? assetUrl(e.imageAssetId) : null,
+            audioUrl: null,
+          }))
+      }
+    }
+
     // 当前版本摘要（用户语言层由前端字典处理）
     const version = content.currentVersion
       ? {

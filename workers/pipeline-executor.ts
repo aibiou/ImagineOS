@@ -137,8 +137,15 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   const shotAssets: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string }> = []
 
   // ---- 图像 + 可选原生视频（逐镜头；并发 2 提速，进度按完成数上报） ----
+  // 渐进可见（UX 原则五，2026-10-07 用户反馈「怎么黑盒的」）：镜头图片在保存后立即入进度载荷
+  // （shotAssets 快照），前端轮询即刻渲染——图片秒级到达，native 视频（60–250s/镜）后到补齐；
+  // 进度计数 current 口径 = 该镜全部完成（图+视频），进度条不虚高。
   const IMAGE_CONCURRENCY = 2
   let imageDone = 0
+  const imagesStageLabel = (done: number, total: number): string =>
+    modeDecision.mode === 'composition'
+      ? `正在绘制镜头画面（${done}/${total}）…`
+      : `正在生成 AI 视频镜头（${done}/${total}）…`
   const imageTasks = shots.map((shot, i) => async () => {
     const { result } = await router.image(
       { prompt: imagePromptFor(shot, structure), size },
@@ -158,6 +165,15 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
 
     // native 路径（ADR-0001 Rev.3 产品默认）：首帧图生视频；失败逐镜回落组合式（不丢用户工作）
     if (motionModeFor(shot, MOTION_ENV) === 'native' && hasVideoShotProvider()) {
+      // 图片先入进度（首帧已可渲染，视频生成期间不再是黑盒）
+      shotAssets.push(entry)
+      await jobService.reportProgress(jobId, {
+        stage: 'images',
+        current: imageDone,
+        total: shots.length,
+        label: imagesStageLabel(imageDone, shots.length),
+        shotAssets: shotAssets.slice(),
+      })
       try {
         const { result: videoResult } = await router.video(
           {
@@ -189,15 +205,17 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
           payload: { stage: 'video.shot.fallback', shotIndex: i, error: message.slice(0, 300) },
         })
       }
+    } else {
+      shotAssets.push(entry)
     }
 
-    shotAssets.push(entry)
     imageDone++
     await jobService.reportProgress(jobId, {
       stage: 'images',
       current: imageDone,
       total: shots.length,
-      label: `正在绘制镜头画面（${imageDone}/${shots.length}）…`,
+      label: imagesStageLabel(imageDone, shots.length),
+      shotAssets: shotAssets.slice(),
     })
   })
   for (let start = 0; start < imageTasks.length; start += IMAGE_CONCURRENCY) {

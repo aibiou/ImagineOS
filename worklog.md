@@ -524,3 +524,22 @@ Stage Summary:
 - 产品行为变更：默认 native-first（ADR-0001 Rev.3）——用户生成 = AI 视频模型逐镜产物，失败逐镜回落合成（诚实标签 native/hybrid/composition 不变）；预期时长 15s/镜 → 60-250s/镜
 - 三项健壮性修复均有同日实证与回归测试覆盖；测试与生产库彻底隔离，额度零误耗
 - 遗留：首次真实用户生成将实证 product 模式全链（本侧零额外采样，按指令①交由用户体验）；推送需新 token
+
+---
+Task ID: gate7-blackbox-fix-009
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人截图反馈「怎么黑盒的？」——创作页生成中 5 个镜头格子全是黑色占位，已完成镜头不可见
+
+Work Log:
+- VLM 解析截图：生成阶段「正在绘制镜头画面（2/5）」+ 进度条 ~40% + 5 个 9:16 黑格（loading 脉冲点），无任何已完成画面
+- 根因定位（链路三处「完成前不可见」）：reportProgress 载荷无资产 → API assets.shots 仅成功后填充 → 前端有渲染能力但无数据；前端 GeneratingStage 本已支持 imageByIndex 渐进渲染，断点纯在数据链路
+- 修复 pipeline-executor：图片保存立即入 shotAssets 快照并 reportProgress（秒级可见）；native 视频完成后再上报补 videoAssetId；current 口径=镜全部完成（进度条不虚高）；label 按模式本地化（native/hybrid →「正在生成 AI 视频镜头」）
+- 修复 creation API：活跃 storyboard Job 进度含 shotAssets 时透出为 assets.shots（覆盖 regenerate 场景的旧轮次资产）
+- 前端：镜头图 fade-in（0.35s motion.img）；重试回队保留 outputJson（已见图片不消失）
+- 测试 tests/progress-visibility.test.ts 4 用例（快照持久化/浅合并不丢/回队保留/终态覆盖）；门禁 tsc ✓ eslint ✓ vitest 108/108；dev server product 模式重启 health 200
+- 文档：m15 报告 §0.5.11；截图证据 upload/pasted_image_1791379568538.jpg 入库（重复粘贴两份已 unstage）
+
+Stage Summary:
+- 「黑盒」黑盒修复全链闭环：图片秒级逐格长出、AI 视频 60–250s/镜后补齐、进度条诚实计镜——native-first 时代 UX 原则五完整成立
+- 前端零结构改动（组件既有能力解锁），回归测试锁死四条语义
+- 待推送：需产品负责人新临时 token
