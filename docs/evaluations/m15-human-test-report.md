@@ -104,6 +104,36 @@
 
 **对 Gate 7 的影响**：3 条被试卡死作品已自动标记失败并可在创作页重试；观察员如遇同类「生成没有完成」卡片，按逐字稿卡「卡住 ≥5min 预案」处理（先点重新生成，连续失败则记录中止）。本缺陷不计入 Expression Success 率的系统性偏差——被试的卡死经历属于真实用户体验数据，如实编码。
 
+### 0.5.6 重试成功作品的产物形态追问（2026-10-07 03:00，观察员上报）
+
+**现象**：§0.5.5 上报作品重试后生成成功，但被试确认产物为「composition 动态图片」而非 AI 视频模型产物，质疑为什么没走 native 管线（证据：`job.type = video.storyboard`）。
+
+**真实路径判定（三态 A/B/C，scripts/m15/investigate-native-routing.mjs，只读取证）**：
+
+- 判定结果：**C——默认直接 composition**。既不是「native 成功」（A），也不是「native 失败后回落」（B）：native 分支从未被进入。
+- 证据链（DB + 进程环境）：
+  1. `video.storyboard` 是所有生成的唯一 Job 类型（native/composition 的分岔不在 Job 层，而在 worker 内部逐镜调度 `motionModeFor()`）；该证据本身不构成 composition 的证明，但下列证据构成；
+  2. dev server 进程环境 `IMAGINEOS_FORCE_NATIVE` 为空（Gate 7 Pre-flight §10 的既定决定：Alpha 默认 composition 路径）；
+  3. 该作品配方 v2 的 5 个镜头 `motion` 字段全部 undefined——`StoryboardSchema`（LLM 分镜输出）不含 motion 字段，`plan-service` 也不写入，该字段在全系统无任何写入点；
+  4. Provenance 0 条 `video.shot`/`native-fallback` 事件，Generation 记账 0 条 video 调用（全库 28 条 video.shot 记账全部来自 Native Golden 评估内容，10-06 晚 FORCE_NATIVE=1 时段）；
+  5. 资产物证：5 张 PNG 图 + 5 段 WAV 旁白 + 1 个 FFmpeg 合成 MP4——零 AI 视频模型产物。
+- 第 5 问如实回答：**native video 通道可用但默认关闭属实**——video.shot Provider 链就绪（agnes-video-2.5-flash enabled + zai-video 兜底，`hasVideoShotProvider()=true`），但仅有的两个开启途径（`IMAGINEOS_FORCE_NATIVE=1` 环境变量 / 配方 `motion='native'` 字段）前者未开启、后者为无写入点的死字段。**评估标准未做任何修改**。
+- 可观测性缺口如实记录：composition 路径不产生路由决策日志（仅 native 失败回落时打 warn + Provenance）——「零事件」与「未尝试」需要靠资产物证区分。
+
+**修复（防误解的产品诚实性要求，M2 冻结例外：测试执行期用户可见性缺陷）**：
+
+| # | 修复 | 位置 |
+|---|------|------|
+| 1 | 生成模式三态计算（composition/native/hybrid + nativeShots/totalShots），口径=最近成功 storyboard Job 的 shotAssets | core/jobs/job-service.ts（computeGenerationMode + 单作/批量查询） |
+| 2 | 探索/我的创作列表 API 携带 generationMode | api/contents/route.ts |
+| 3 | 创作空间聚合 API 携带 generationMode | api/contents/[id]/creation |
+| 4 | 用户可见徽章「生成模式：AI 图像 + 运镜合成 / AI 视频生成 / AI 视频 x/N 镜 · 其余图像合成」+ 悬停说明（防误解文案） | _language（generationModeLabel + GENERATION_MODE_DESC）+ 首页卡片/播放对话框 + 创作页 REVIEW/成片区 |
+| 5 | 夹具作品（无生成记录）返回 null——不猜模式，不显示徽章 | 同上（computeGenerationMode 脏容错） |
+
+**验证**（全部真实执行）：单测 +6（三态口径/脏容错/批量优先当前版本/用户语言，全套 79/79）；API 实测（explore 列表 24 项：21 带模式 + 3 夹具 NULL）；UI 浏览器实测（探索卡片徽章 composition+hybrid / 播放对话框徽章+悬停说明 / 创作页成片区徽章两态 / 375px 小视口不溢出）。
+
+**对 Gate 7 的影响**：被试将看到每个作品的生成模式徽章——「AI 图像 + 运镜合成」与「AI 视频生成」的区分对首反应编码是重要上下文（被试不应把合成形态误读为 AI 视频模型能力）。观察员无需主动解释；被试问「这是 AI 视频吗」时按徽章口径回答。§1 运动路径配置行仍如实记录测试时段的 FORCE_NATIVE 状态。
+
 ---
 
 ## 1. 测试执行概况（人工填写）

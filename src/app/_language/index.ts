@@ -70,6 +70,35 @@ export const COPY = {
   latestVersion: '最新版本',
 } as const
 
+// ---------- 生成模式（2026-10-07：真实产物路径必须对用户可见） ----------
+
+/** 生成模式的用户语言（诚实披露：合成动图 ≠ AI 视频模型产物） */
+export function generationModeLabel(
+  mode: string | null | undefined,
+  nativeShots?: number,
+  totalShots?: number,
+): string | null {
+  switch (mode) {
+    case 'native':
+      return 'AI 视频生成'
+    case 'hybrid':
+      return nativeShots != null && totalShots != null
+        ? `AI 视频 ${nativeShots}/${totalShots} 镜 · 其余图像合成`
+        : 'AI 视频 + 图像合成混合'
+    case 'composition':
+      return 'AI 图像 + 运镜合成'
+    default:
+      return null
+  }
+}
+
+/** 生成模式说明（一句话解释，防误解的关键文案） */
+export const GENERATION_MODE_DESC: Record<string, string> = {
+  native: '每个镜头由 AI 视频模型直接生成动态画面',
+  hybrid: '部分镜头由 AI 视频模型生成，其余由 AI 图像加运镜合成',
+  composition: '每个镜头是 AI 生成的图像，加上镜头运动与转场合成为视频',
+}
+
 // ---------- 工具 ----------
 
 /** 时长（毫秒 → 「45 秒」「1 分 20 秒」） */

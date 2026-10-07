@@ -17,6 +17,7 @@ import {
   Film,
   GitBranch,
   History,
+  Images,
   Loader2,
   MessageCircleQuestion,
   Music4,
@@ -35,7 +36,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { CAMERA_LABEL, COPY, CREATE_STEPS, STAGE_LABEL, durationLabel, versionLabel, versionWithCount } from '@/app/_language'
+import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, STAGE_LABEL, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -63,6 +64,7 @@ interface CreationBundle {
     poster: { url: string } | null
     shots: Array<{ shotIndex: number; imageUrl: string | null; audioUrl: string | null }>
   }
+  generationMode: { mode: string; nativeShots: number; totalShots: number } | null
   remixOf: { sourceContentId: string; sourceVersionId: string } | null
 }
 
@@ -432,7 +434,7 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
 
       {/* ---- REVIEW：预览与调整 ---- */}
       {status === 'REVIEW' && (
-        <ReviewStage shots={shots} shotImages={assets.shots} busy={busy}
+        <ReviewStage shots={shots} shotImages={assets.shots} busy={busy} generationMode={bundle.generationMode}
           onRender={() => void act('render', `/api/contents/${id}/render`, undefined, '开始合成你的视频')}
           onRevise={() => setRevisionOpen(true)}
           onRegenerate={() => void act('regenerate', `/api/contents/${id}/regenerate`, undefined, '换一批画面，重新来过')} />
@@ -929,6 +931,7 @@ function ReviewStage({
   shots,
   shotImages,
   busy,
+  generationMode,
   onRender,
   onRevise,
   onRegenerate,
@@ -936,15 +939,34 @@ function ReviewStage({
   shots: NonNullable<CreationBundle['story']>['scenes'][number]['shots']
   shotImages: CreationBundle['assets']['shots']
   busy: string | null
+  generationMode: CreationBundle['generationMode']
   onRender: () => void
   onRevise: () => void
   onRegenerate: () => void
 }) {
   const imageByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.imageUrl]))
   const audioByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.audioUrl]))
+  const modeLabel = generationModeLabel(generationMode?.mode, generationMode?.nativeShots, generationMode?.totalShots)
+  const modeDesc = generationMode ? GENERATION_MODE_DESC[generationMode.mode] : undefined
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
-      <p className="text-sm text-zinc-400">每个镜头的画面和配音都好了——先看看，满意就合成完整视频，不满意随时改。</p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-sm text-zinc-400">每个镜头的画面和配音都好了——先看看，满意就合成完整视频，不满意随时改。</p>
+        {modeLabel && (
+          <Badge
+            variant="outline"
+            title={modeDesc}
+            className={
+              generationMode?.mode === 'composition'
+                ? 'gap-1 border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300'
+                : 'gap-1 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-300'
+            }
+          >
+            {generationMode?.mode === 'composition' ? <Images className="size-3" aria-hidden /> : <Film className="size-3" aria-hidden />}
+            生成模式：{modeLabel}
+          </Badge>
+        )}
+      </div>
       <div className="space-y-3">
         {shots.map((shot, i) => (
           <div key={i} className="flex gap-4 overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/50">
@@ -1004,10 +1026,12 @@ function FinishStage({
   onRegenerate: () => void
   onStartOwn: () => void
 }) {
-  const { content, assets, version } = bundle
+  const { content, assets, version, generationMode } = bundle
   const published = content.status === 'PUBLISHED'
   const hasVideo = assets.final != null
   const dur = durationLabel(assets.final?.durationMs ?? null)
+  const modeLabel = generationModeLabel(generationMode?.mode, generationMode?.nativeShots, generationMode?.totalShots)
+  const modeDesc = generationMode ? GENERATION_MODE_DESC[generationMode.mode] : undefined
 
   // Remix 起点且还没有自己的成片：邀请生成自己的创作
   if (!hasVideo) {
@@ -1054,6 +1078,20 @@ function FinishStage({
           <Badge variant="outline" className="gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
             <Wand2 className="size-3" aria-hidden /> {COPY.aiInvolved}
           </Badge>
+          {modeLabel && (
+            <Badge
+              variant="outline"
+              title={modeDesc}
+              className={
+                generationMode?.mode === 'composition'
+                  ? 'gap-1 border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300'
+                  : 'gap-1 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-300'
+              }
+            >
+              {generationMode?.mode === 'composition' ? <Images className="size-3" aria-hidden /> : <Film className="size-3" aria-hidden />}
+              生成模式：{modeLabel}
+            </Badge>
+          )}
         </div>
       </div>
 

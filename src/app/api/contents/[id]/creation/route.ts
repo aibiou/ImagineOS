@@ -4,7 +4,7 @@ import { getSessionUser, domainErrorToResponse } from '../../../_lib/session'
 import { contentService } from '@/core/content/content-service'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
-import { jobService, parseLastError } from '@/core/jobs/job-service'
+import { jobService, parseLastError, computeGenerationMode } from '@/core/jobs/job-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure } from '@/core/content/schemas'
 
@@ -65,8 +65,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // 失败标记（Job 永久失败 / 看门狗超时 / 入队失败 → 对用户可见的错误消息）
     const lastError = parseLastError(content.lastErrorJson)
 
-    // 视觉资产（当前版本）
+    // 视觉资产（当前版本）+ 生成模式（真实产物路径，对用户可见）
     const assets: Record<string, unknown> = { final: null, poster: null, shots: [] }
+    let generationMode: { mode: string; nativeShots: number; totalShots: number } | null = null
     const versionId = content.currentVersionId
     if (versionId) {
       const renderJob = await jobService.latestSucceededJob(id, versionId, 'video.render')
@@ -82,8 +83,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       // 分镜图像（最近一次成功的 storyboard）
       const sbJob = await jobService.latestSucceededJob(id, versionId, 'video.storyboard')
       if (sbJob?.outputJson) {
+        generationMode = computeGenerationMode(sbJob.outputJson)
         const parsed = JSON.parse(sbJob.outputJson) as {
-          shotAssets?: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string }>
+          shotAssets?: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string; videoAssetId?: string }>
         }
         const entries = parsed.shotAssets ?? []
         const ids = entries.flatMap((e) => [e.imageAssetId, ...(e.ttsAssetId ? [e.ttsAssetId] : [])])
@@ -135,6 +137,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         ? { code: lastError.code, message: lastError.message, at: lastError.at, jobId: lastError.jobId ?? null }
         : null,
       assets,
+      generationMode,
       remixOf: remixOf
         ? {
             sourceContentId: remixOf.sourceContentId,

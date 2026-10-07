@@ -32,6 +32,37 @@ export interface GenerationErrorMarker {
   at: string
 }
 
+/** 生成模式（真实产物路径，对用户可见——防止把 Ken Burns 合成误认为 AI 视频模型产物）：
+ *  - composition：全部镜头为「生成图像 + 运镜合成」（零 video.shot 资产）
+ *  - native     ：全部镜头为 AI 视频模型产物（每镜都有 videoAssetId）
+ *  - hybrid     ：部分镜头 native、其余回落 composition（native-fallback 的诚实形态）
+ */
+export type GenerationMode = 'composition' | 'native' | 'hybrid'
+
+export interface GenerationModeInfo {
+  mode: GenerationMode
+  nativeShots: number
+  totalShots: number
+}
+
+/** 由 storyboard Job 的 outputJson 计算生成模式（纯函数，脏容错：无记录/坏 JSON → null） */
+export function computeGenerationMode(outputJson: string | null | undefined): GenerationModeInfo | null {
+  if (!outputJson) return null
+  try {
+    const parsed = JSON.parse(outputJson) as {
+      shotAssets?: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string }>
+    }
+    const entries = parsed.shotAssets
+    if (!Array.isArray(entries) || entries.length === 0) return null
+    const nativeShots = entries.filter((e) => Boolean(e.videoAssetId)).length
+    const totalShots = entries.length
+    const mode: GenerationMode = nativeShots === 0 ? 'composition' : nativeShots === totalShots ? 'native' : 'hybrid'
+    return { mode, nativeShots, totalShots }
+  } catch {
+    return null
+  }
+}
+
 /** 解析 Content.lastErrorJson（脏容错：坏 JSON 返回 null） */
 export function parseLastError(raw: string | null | undefined): GenerationErrorMarker | null {
   if (!raw) return null
@@ -281,6 +312,42 @@ export const jobService = {
       where: { contentId, type, status: 'succeeded', ...(versionId ? { versionId } : {}) },
       orderBy: { completedAt: 'desc' },
     })
+  },
+
+  /** 单作品生成模式（最近成功 storyboard 的真实产物路径；无生成记录 → null） */
+  async generationModeForContent(contentId: string): Promise<GenerationModeInfo | null> {
+    const job = await db.generationJob.findFirst({
+      where: { contentId, type: 'video.storyboard', status: 'succeeded' },
+      orderBy: { completedAt: 'desc' },
+    })
+    return computeGenerationMode(job?.outputJson)
+  },
+
+  /** 批量生成模式（列表页用；一次查询，内存分组——作品列表量级 << 千，无需聚合下推） */
+  async generationModesForContents(
+    list: Array<{ id: string; currentVersionId: string | null }>,
+  ): Promise<Map<string, GenerationModeInfo | null>> {
+    const out = new Map<string, GenerationModeInfo | null>()
+    if (list.length === 0) return out
+    const jobs = await db.generationJob.findMany({
+      where: { contentId: { in: list.map((c) => c.id) }, type: 'video.storyboard', status: 'succeeded' },
+      orderBy: { completedAt: 'desc' },
+      select: { contentId: true, versionId: true, outputJson: true, completedAt: true },
+    })
+    const byContent = new Map<string, Array<{ versionId: string | null; outputJson: string | null }>>()
+    for (const job of jobs) {
+      const arr = byContent.get(job.contentId) ?? []
+      arr.push({ versionId: job.versionId, outputJson: job.outputJson })
+      byContent.set(job.contentId, arr)
+    }
+    for (const content of list) {
+      const candidates = byContent.get(content.id) ?? []
+      // 优先当前版本的产物；无则最近一次（历史版本也是真实生成记录）
+      const chosen =
+        candidates.find((j) => j.versionId && j.versionId === content.currentVersionId) ?? candidates[0]
+      out.set(content.id, computeGenerationMode(chosen?.outputJson))
+    }
+    return out
   },
 
   async getJob(jobId: string) {

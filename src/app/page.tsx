@@ -15,9 +15,11 @@ import {
   BadgeCheck,
   BookOpenText,
   Clapperboard,
+  Film,
   GitBranch,
   Heart,
   History,
+  Images,
   Loader2,
   MessageCircleQuestion,
   PenLine,
@@ -37,7 +39,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { COPY, STAGE_LABEL, durationLabel, versionLabel, versionWithCount, METHOD_LABEL } from '@/app/_language'
+import { COPY, GENERATION_MODE_DESC, STAGE_LABEL, durationLabel, generationModeLabel, versionLabel, versionWithCount, METHOD_LABEL } from '@/app/_language'
 
 // ---------- API 类型 ----------
 
@@ -52,6 +54,7 @@ interface ContentListItem {
   posterUrl: string | null
   videoUrl: string | null
   durationMs: number | null
+  generationMode: { mode: string; nativeShots: number; totalShots: number } | null
   currentVersion: { id: string; versionNumber: number; changelog: string | null; createdAt: string } | null
   _count: { versions: number; remixSources: number }
 }
@@ -96,6 +99,27 @@ function statusBadgeClass(status: string): string {
     default:
       return 'border-zinc-500/40 bg-zinc-500/15 text-zinc-300'
   }
+}
+
+/** 生成模式徽章（2026-10-07）：真实产物路径必须可见——防止把图像+运镜合成误认为 AI 视频模型产物 */
+function GenerationModeBadge({ mode }: { mode: ContentListItem['generationMode'] }) {
+  const label = generationModeLabel(mode?.mode, mode?.nativeShots, mode?.totalShots)
+  if (!label || !mode) return null
+  const isComposition = mode.mode === 'composition'
+  return (
+    <Badge
+      variant="outline"
+      title={GENERATION_MODE_DESC[mode.mode]}
+      className={
+        isComposition
+          ? 'gap-1 border-amber-500/30 bg-amber-500/10 text-[11px] text-amber-300'
+          : 'gap-1 border-emerald-500/30 bg-emerald-500/10 text-[11px] text-emerald-300'
+      }
+    >
+      {isComposition ? <Images className="size-3" aria-hidden /> : <Film className="size-3" aria-hidden />}
+      {label}
+    </Badge>
+  )
 }
 
 // ---------- 页面 ----------
@@ -586,9 +610,12 @@ export default function Home() {
               <div className="space-y-4 p-5">
                 <div>
                   <h3 className="text-lg font-semibold leading-snug text-zinc-100">{playingItem.title}</h3>
-                  {durationLabel(playingItem.durationMs) && (
-                    <span className="text-xs text-zinc-500">{durationLabel(playingItem.durationMs)}</span>
-                  )}
+                  <div className="mt-1 flex flex-wrap items-center gap-2">
+                    {durationLabel(playingItem.durationMs) && (
+                      <span className="text-xs text-zinc-500">{durationLabel(playingItem.durationMs)}</span>
+                    )}
+                    <GenerationModeBadge mode={playingItem.generationMode} />
+                  </div>
                 </div>
                 <div className="flex items-center justify-between text-sm">
                   <div className="flex items-center gap-2 text-zinc-300">
@@ -675,11 +702,12 @@ function ContentCard({
       </a>
       <CardHeader className="gap-2 pb-2 pt-3.5">
         <h3 className="line-clamp-1 font-medium leading-snug text-zinc-100">{item.title}</h3>
-        <div className="flex items-center gap-3 text-xs text-zinc-500">
+        <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
           <span>{item.currentVersion ? versionWithCount(item.currentVersion.versionNumber, item._count.versions) : '还没开始'}</span>
           {item._count.remixSources > 0 && (
             <span className="flex items-center gap-1 text-fuchsia-300/80"><GitBranch className="size-3" aria-hidden />被续创 ×{item._count.remixSources}</span>
           )}
+          {item.generationMode && <GenerationModeBadge mode={item.generationMode} />}
         </div>
       </CardHeader>
       <CardContent className="pb-1">
@@ -774,11 +802,14 @@ function ExploreCard({
           </div>
         </div>
 
-        {/* AI involvement + Remix（评审指定结构） */}
+        {/* AI involvement + 生成模式 + Remix（评审指定结构；生成模式为诚实披露） */}
         <div className="mt-3 space-y-2.5">
-          <Badge variant="outline" className="w-fit gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
-            <Wand2 className="size-3" aria-hidden /> {COPY.aiInvolved}
-          </Badge>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="outline" className="gap-1 border-violet-500/30 bg-violet-500/10 text-[11px] text-violet-300">
+              <Wand2 className="size-3" aria-hidden /> {COPY.aiInvolved}
+            </Badge>
+            <GenerationModeBadge mode={item.generationMode} />
+          </div>
           <Button
             size="sm"
             disabled={busy}

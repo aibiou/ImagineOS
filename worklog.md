@@ -370,3 +370,21 @@ Stage Summary:
 - 「任何异常必须 FAILED + error message」已落地为三层：Job 层（failed/timeout + error）、Content 层（lastErrorJson + 溯源事件）、用户层（失败卡 + 原因 + 重试按钮）；「不能永久停留 GENERATING」由看门狗兜底（最坏 10 分钟内转为可见失败态）
 - 探索关闭按钮、首页修订死路两个真实用户可感知缺陷一并修复
 - 本缺陷属 M2 冻结例外（线上缺陷处置）；修复记录已入 Gate 7 报告 §0.5.5，对 Expression Success 率编码无系统性豁免（卡死经历如实计入被试体验数据）
+
+---
+Task ID: gate7-incident-002
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人上报——重试成功的作品产物是 composition 动图而非 native AI video（job.type=video.storyboard），要求查清真实路径（三态 A/B/C）、不改评估标准只报真实路径、如是配置问题则增加用户可见「生成模式」标识
+
+Work Log:
+- 只读取证（scripts/m15/investigate-native-routing.mjs，不改任何数据）：三态判定 = **C 默认直接 composition**——dev server 进程环境 IMAGINEOS_FORCE_NATIVE 为空（Pre-flight §10 既定决定）；配方 v2 五镜 motion 全部 undefined（StoryboardSchema 无此字段、plan-service 不写，全系统无写入点）；Provenance 零 video.shot/native-fallback 事件、Generation 零 video 调用（全库 28 条 video.shot 全来自 Native Golden 评估内容）；资产物证 5 PNG + 5 WAV + 1 FFmpeg MP4。job.type=video.storyboard 是所有生成的唯一 Job 类型（分岔在 worker 逐镜 motionModeFor），该证据本身不构成证明，资产+记账才构成
+- 第 5 问确认：native video 通道可用但默认关闭属实（agnes-video enabled + zai-video 兜底 hasVideoShotProvider=true，但两个开启途径一个未开一个是无写入点死字段）；可观测性缺口如实记录（composition 路径无路由决策日志）；评估标准零修改
+- 修复（用户可见「生成模式」标识，M2 冻结例外=测试执行期用户可见性缺陷）：①job-service 新增 computeGenerationMode 纯函数（三态 composition/native/hybrid + nativeShots/totalShots，脏容错返回 null）+ generationModeForContent/generationModesForContents（批量优先当前版本、回退最近一次）②探索/我的创作列表 API + 创作空间聚合 API 携带 generationMode ③_language 新增 generationModeLabel + GENERATION_MODE_DESC 防误解文案（走产品语言字典，工程术语 Native/Composition 不直接上 UI）④UI 徽章四点位：探索卡片、播放对话框（含悬停说明）、创作页 REVIEW 态、成片区 meta 行；composition 琥珀色 Images 图标、native/hybrid 绿色 Film 图标；夹具无生成记录不显示徽章（不猜模式）
+- 验证（全真实执行）：vitest +6 → 79/79 全绿；typecheck ✓ lint ✓；API 实测 explore 24 项（21 带模式 + 3 夹具 NULL）；UI 浏览器实测探索卡片 composition+hybrid 双态徽章 / 播放对话框徽章+悬停说明「每个镜头是 AI 生成的图像，加上镜头运动与转场合成为视频」/ 创作页成片区双态 / 375px 小视口徽章不溢出；截图 3 张留证 tool-results/genmode-*.png
+- 文档：m15-human-test-report.md 新增 §0.5.6（真实路径判定证据链 + 修复表 + 对 Gate 7 的影响：徽章成为首反应编码的重要上下文，被试不应把合成形态误读为 AI 视频模型能力）
+
+Stage Summary:
+- 三态判定如实交付：C（默认直接 composition），非 A 非 B；native 从未被尝试（零事件+零记账+资产物证）
+- 「native 可用但默认关闭」确认属实——这是 Alpha 设计使然（human-test-plan §10 记录在案），非缺陷；但用户误导问题真实存在，已用「生成模式」徽章解决
+- 生成模式口径：最近成功 storyboard Job 的 shotAssets（带 videoAssetId 镜头数）——真实产物路径，非配置推断；hybrid 形态（Native Golden 1/5）诚实展示
+- M2 冻结例外依据：测试执行期用户可见性缺陷（与 §0.5.5 同类），评估标准零修改
