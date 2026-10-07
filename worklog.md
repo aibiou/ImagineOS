@@ -329,3 +329,25 @@ Stage Summary:
 - 不进入 M2 开发已写入 Final Package §5 生效：M2 规划唯一输入 = Gate 7 真人测试数据（Expression Success 率 +「我还想做一个」行为率），由产品负责人确认后启动
 - 演示体系带诚实披露：21 件发布作品中 p10/G3/G4/Native 四件为重置后真实字节（现场演示首选）；p01–p09 与 M1 种子为占位恢复（结构与时长精确，演示真实质量时不用）；3 件夹具排除
 - 下一步（人工阶段）：产品负责人按 human-test-plan.md §10 pre-flight 清单开场执行 Gate 7（目标 16 人起步 10 人）→ 测试后 node scripts/m15/export-human-test.mjs 导出 + integrity-check 批量复核 → 填充 m15-human-test-report.md → M2 范围决策（§6 决策矩阵）
+
+---
+Task ID: gate7-execution-001
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令——进入 Gate 7 执行阶段：按 human-test-plan.md 执行真人测试准备、准备测试环境和任务案例、收集 ≥10 名用户完整创作流程数据、输出 Gate 7 Final Report；测试完成前冻结 M2 开发
+
+Work Log:
+- 职责边界声明（诚实原则）：六指标的人工编码字段（首反应/访谈确认/修订语境）只能由真人产生，agent 不可也不得代产生——本 session 执行全部系统侧工作，真人被试招募与现场执行属产品负责人阶段（报告 §0.5.4 五步交接）
+- Pre-flight §10 清单实测（五项全绿）：预览 200（本地+外网）/ agnes LLM 真实对话 2.3s + agnes Image 真实生图 11.3s + z-ai TTS 真实合成 733ms（运行时同路径连接测试端点）/ composition 模式确认（dev server 进程环境 IMAGINEOS_FORCE_NATIVE 为空）/ 导出链路 + 种子隔离双机制验证（34 历史非种子用户被 --since 正确排除）
+- 系统侧预演（gate7-rehearsal.mjs，A 级证据，非 Gate 7 数据）：2 个多样化匿名会话（R1 45+ 家庭回忆 / R2 20-30 情绪城市，对应计划 §2 配额维度）并发全链至发布——2/2 成功（105s/154s，SQLite 跨会话写锁无冲突=测试日两位被试同时创作的真实并发验证）；导出演练 --since=预演窗口 → 被试数 2 六指标自动推导正确；idsFile 完整性复核 → M1.5 生产案例 15 件（含预演 2 件）0 错 0 警；时间窗隔离机制经实测（真人测试导出用 --since=<真人测试开始时刻> 自动排除预演会话）
+- 观察员物料包（download/gate7-kit/gate7-observer-kit.md，108 行打印随身文档）：A 逐字稿卡（七时点照读+禁止词+观察员三件事）/ B 记录表（打印 16 份，含首反应编码判定例与修订五类别）/ C 每日 Pre-flight 清单+中止三条件 / D 测试日 Runbook（导出+idsFile 复核命令+配额预算：TTS 日耗 ~15-55 段低于风暴阈值 ~130）
+- Gate 7 报告更新（m15-human-test-report.md）：新增 §0.5 执行阶段开启与系统侧预演（0.5.1 Pre-flight 实测表 / 0.5.2 预演 A 级记录+隔离声明 / 0.5.3 配额预算 / 0.5.4 真人阶段五步交接）；修复编辑缺陷一处（§1 标题被吞，立即补回）；15 处人工字段全部保持「未执行」——禁止预填虚构值原则执行
+- 状态同步：Final Package §0 组件 5 → 🟡 执行阶段开启；evaluations README 同步
+- 门禁：typecheck ✓ / lint ✓ / vitest 64/64 ✓（src/ 零改动，纯脚本+文档）
+- 提交推送：ccc0d41（报告+预演脚本+状态同步）+ fd72f7d（观察员物料包）→ GitHub main
+
+Stage Summary:
+- 指令 §1 §2 完成：真人测试准备（四项确认已锁定）+ 测试环境（Pre-flight 五项实测全绿）+ 任务案例物料（observer kit 打印包 + Runbook）
+- 指令 §3 边界如实交付：系统侧预演 2 个并发会话数据已采集（2/2 发布、0 错 0 警）；「≥10 名用户」中真人数据部分需产品负责人按 §0.5.4 交接执行（招募 16 人/起步 10 人 → 30 分钟流程 → Runbook 导出）——agent 无法替代人类被试，预演会话严格不计入六指标
+- 指令 §4 状态：Gate 7 Final Report = m15-human-test-report.md（系统侧章节收口完成；Final 判定待 ≥10 真人数据回填后自动收口，报告 §6 决策矩阵直接输出 M2 方向）
+- 指令 §5 执行中：M2 开发冻结（Final Package §5 冻结声明继续生效；本 session 零产品代码改动）
+- 下一步（人工阶段）：产品负责人招募被试 → 按 observer kit 执行测试日 → 回传记录表 + 导出 JSON → 本 agent 负责数据合并、报告 §1-§7 填充与 M2 方向裁决
