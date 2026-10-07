@@ -244,3 +244,32 @@
 **官方文档双站复核**（2026-10-07 07:00，产品负责人指定 agnes-video-25-flash 双站页面，另拉 tokenplan 佐证限速）：双站文档同构仅币种差异（¥0/$0 每秒，限时免费）；免费档视频实际 RPM 1（允许发起 2）；**限制池按密钥类型共享、同类型多密钥不叠加**，但 agnes-cn/com 为两套独立部署独立额度池——双 provider 轮转属官方口径下合规的额度利用，非绕限；轮询官方建议 1–2s（我们 3s 保守不超速）、keyframe 轮询必须带 model_name（代码恒带）。**遗留风险入档**：first_frame 官方口径为公开 URL、生产传 data URI——已过校验层（503 非 400），推理层是否接受待队列窗口验证（本地无公网托管能力，data URI 为当前唯一形态）。**观测缺口修复**：Generation 失败记账此前丢弃 error 字段（历史 15 条 agnes video.shot 失败全无原因可查），现失败原因写入 outputJson——历史失败延迟双峰（~20.5s 队列满退避耗尽 / ~200ms 瞬时错，与 RPM 1 下 429 形态吻合）反向坐实限速感知调度的必要性。
 
 **对 Gate 7 的影响**：测试日双被试并发创作（§0.5.5 事故形态）下，图片/LLM 流量由两家免费额度分摊 + 429 自动冷却让位——「三通道任一长冷却」的中止条件触发概率显著下降；Provider 配额状态行（§1）建议记录双站点各自的探测结果。评估标准零修改（M2 冻结例外：测试执行期可靠性加固，与 §0.5.5 同族——其根因即 provider 限速）。
+
+### 0.5.9 data URI 双站验证闭合 + 产品功能硬化（2026-10-07 12:11–13:00，产品负责人指令转向）
+
+**R1 核心遗留闭合：first_frame data URI 推理层接受度——双站验证通过**。2026-10-07 12:11:27 agnes-cn 视频队列窗口打开（此前 2026-10-06 20:14 agnes-com 已全链成功 278s / 1.12MB / 704x1280 / data URI 首帧），守望器 v2 提交成功后进程被外部 SIGKILL，`scripts/m15/salvage-cn-task.mjs` 直接轮询收割在途任务（零额外额度消耗）：**0.78MB / 704x1280 / data URI 首帧 cn 站推理层验证通过**。双站旗文件 `scripts/m15/state/flags/agnes-video-ok--agnes-cn` 与 `--agnes-com` 均已立起——「官方口径公开 URL vs 生产 data URI」的形态风险正式闭合：**Flash 校验层与推理层均接受 data URI**（本地无公网托管能力下，当前唯一形态可用）。
+
+**产品负责人指令转向**（2026-10-07 12:38）：「你把产品功能做好，至于作品用户自己体验」——native 全镜采样重跑（supervise-g6-native，12:19–12:38 已完成其 storyboard job 后）**正式终止，不再重启**；双站每日免费秒数额度让位 Gate 7 真人测试；**作品质量（native 形态表现力）评估归用户侧体验，系统侧不再预生成样本自评**。dev server 已切回 composition（Gate 7 默认）。
+
+**产品功能硬化（M2 冻结例外：线上缺陷，三项均有同日实证）**：
+
+1. **前置条件错误 fail-fast**：实证——08:31 门禁跑批期间，worker 真实执行测试遗留 job，「配方中没有镜头（先完成分镜）」这一确定性错误被无差别重试 3 轮、1 秒内耗尽（`GenerationJob` 3 条 failed retry=3/3 同秒落账）。修复——新增 `NonRetryableJobError`（job-service 导出）；pipeline-executor 全部结构性前置条件（作品不存在/配方缺失/配方无镜头/payload 坏 JSON/未知 Job 类型/版本结构损坏）改抛该类型；worker catch 识别后 `retryable: false` 一次终态 + `Content.lastErrorJson` 直接落用户可见指引（「先完成分镜」）。运行时状态依赖失败（如 render 的「找不到已完成的分镜生成记录」）保持可重试（温和侧：退避后 storyboard 完成即可自愈）。
+2. **重试退避（防重试风暴）**：实证——同上 1 秒 3 轮形态；429/503 场景下立即重试还会加重限流（§0.5.8 冷却调度的反面）。修复——`fail()` 回队时按 retryCount 递增退避（15s/30s/45s，`RETRY_BACKOFF_BASE_MS`），经 `leaseExpiresAt` 表达「最早可认领时间」（SQLite 队列无独立调度字段，复用租约语义）；`claimNext()` 过滤退避窗口。退避中的 queued Job 仍是 `activeJobForContent` 意义上的活跃 Job（进度轮询不闪断）。
+3. **vitest 测试库隔离**：实证——①生产 `custom.db` 的 `GenerationJob` 中存在 error=「x」的记录（tests/generation-failure.test.ts:92 直接写入）；②测试遗留的 queued Job 被 dev server worker 认领真实执行（同日 08:31 批次）。修复——`vitest.config.ts` 注入 `DATABASE_URL=file:db/test.db` + `tests/global-setup.ts` 每轮删库重建；跑批前后对照验证：**custom.db jobs/generations/contents 计数 91/727/215 零变化**，测试数据 12 jobs / 39 contents 全部落 test.db。此后门禁跑批与被试数据彻底隔离，且生产 worker 永不再执行测试 Job（额度零误耗）。
+
+**门禁与部署**：tsc ✓ / eslint ✓ / vitest **101/101**（97 基线 + 4 新增 `tests/job-retry-policy.test.ts`）；dev server 已以新代码重启（composition 模式，worker tick 正常）。**对 Gate 7 的影响**：被试遇到配方竞态时立即看到可操作指引（而非 3 轮无声重试后的延迟失败）；429/队列满场景的重试风暴消失（与 §0.5.8 冷却调度叠加，双站点让位更平滑）；门禁跑批不再触碰被试数据。评估标准零修改。
+
+### 0.5.10 产品默认 native-first（2026-10-07 13:00，产品负责人指令：「我就想要AI视频，不是AI图片播放」）
+
+**指令理解与裁决**：产品负责人明确产品预期 = AI 视频模型逐镜生成的真实运动画面，而非「AI 图 + Ken Burns 运镜」的组合式合成——此为 ADR-0001 Rev.2 留待 M2 的调度策略裁决，由本指令提前作出（**Rev.3**，详见 ADR）：**产品默认 = native**。
+
+**实施（`src/core/content/storyboard-mode.ts` 为单一事实源）**：
+- `motionModeFor` 缺省翻转 `composition` → `native`；决策优先级 = `IMAGINEOS_FORCE_NATIVE`（评估开关）> `IMAGINEOS_FORCE_COMPOSITION`（**新增运维逃生阀**：视频 provider 全挂时强制合成路径保可用性）> 配方 `motion` 显式值 > 产品默认 native；
+- `workers/pipeline-executor.ts` 本地 motionModeFor 副本删除，改引中心模块；逐镜回落兜底（native 失败 → 该镜 composition + native-fallback 溯源事件）与诚实标签（computeGenerationMode：native/hybrid/composition 用户可见）保持不变；
+- `restart-dev.sh` 三模式化：`product`（默认，无开关）/ `native` / `composition`；dev server 已以 **product 模式**运行（native-first 生效）。
+
+**翻转的前置依据**：双站点 data URI 首帧推理层验证通过（§0.5.9，agnes-com 278s 全链 + agnes-cn 抢救收割 0.78MB）；限速感知调度（§0.5.8 双 provider 轮转 + 冷却让位）在位；0.5.9 的重试退避 + fail-fast 保证队列满场景不产生重试风暴。
+
+**对 Gate 7 的影响（如实告知被试与记录）**：生成时长预期从 ~15s/镜升至 ~60–250s/镜（队列窗口依赖），全片 5–10 分钟属正常；队列满/额度耗尽时部分镜回落 composition（hybrid）或全回落（composition），产物标签如实显示——回落是兜底行为非缺陷，被试若对形态不满如实记录（这正是 Alpha 要验证的表达链路事实）。每日免费秒数消耗显著上升，双站点额度让位真人测试（§0.5.9 指令延续）。评估标准零修改。
+
+**门禁**：tsc ✓ / eslint ✓ / vitest **104/104**（+3：motionModeFor 单测 3 例 + storyboardModeDecision 重写 6 例）。测试库隔离下跑批，custom.db 零污染。

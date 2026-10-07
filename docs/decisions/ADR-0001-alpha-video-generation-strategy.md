@@ -100,3 +100,32 @@ Rev.2 定义的调度点，当前实际状态（审计证据：`download/video-p
 2. **`Shot.motion`（配方字段）**：⚠️ **死字段——schema 已定义（schemas.ts:63），但全系统零写入点**。plan-service 密封配方只写 cameraMotion / durationMs / narrationLine / emotion；story.ts 的 LLM 输出 schema 不含 motion；无任何 API 接受该字段。也就是说 Rev.2 图中的 `Shot.motion = native` 分支目前**只能由评估开关触发**，不存在产品侧入口。
 3. **由此形成的 Alpha 现状**：所有真实用户生成 = 默认 composition（三态判定 C）。这与 Rev.2「调度策略在 M2 按用户分层再定」一致——不是实现偏差，是调度策略尚未开始建设。给 `motion` 字段建设写入点（创作页开关 / 分层调度 / provider 健康度降级）是 M2 的正规入口，届时应先给本字段补测试再启用。
 4. **观测性补齐（Audit R3）**：storyboard Job 现在会在执行开头写 Provenance `mode.decision` 事件（`src/core/content/storyboard-mode.ts`，意图口径；产物口径仍以 computeGenerationMode 为准，两者差异 = 回落证据）。native-fallback 事件自 Gate 6 起就有；缺的是 composition 路径的决策记录，现已补。
+
+---
+
+## 修订 Rev.3（2026-10-07，产品负责人指令：native-first 产品默认）
+
+### 触发
+
+产品负责人明示：「我就想要AI视频，不是AI图片播放」。用户在 Gate 7 预演中看到的 composition 产物（AI 图 + Ken Burns 运镜）与产品预期（AI 视频模型生成的真实运动画面）不符。Rev.2 留待 M2 的调度策略裁决，由产品负责人本指令提前作出：**产品默认 = native**。
+
+### 前置条件（为何此时可翻转）
+
+- 双站点 native 通道全链验证通过：agnes-com（2026-10-06 20:14，278s / 1.12MB / 704x1280）与 agnes-cn（2026-10-07 12:18 抢救收割，0.78MB / 704x1280）——**data URI 首帧在两家 Flash 推理层均被接受**（此前唯一遗留的形态风险，report §0.5.9 闭合）；
+- 限速感知调度（gate7-rate-aware-005）在位：双 provider 轮转 + 429/队列满冷却让位，RPM 1 环境下可排队消化；
+- 逐镜回落兜底（Rev.2 已实现）：native 失败 → 该镜回落 composition + `native-fallback` 溯源事件，用户工作永不丢失；
+- 诚实标签在位：`computeGenerationMode`（native/hybrid/composition）对用户可见，回落不隐瞒。
+
+### 决定
+
+1. **产品默认翻转**：`motionModeFor` 缺省值 `composition` → `native`（`src/core/content/storyboard-mode.ts`，逐镜头判定与 Job 级快照的单一事实源；`workers/pipeline-executor.ts` 本地副本已删除改为引用）。
+2. **决策优先级**：`IMAGINEOS_FORCE_NATIVE=1`（评估开关）> `IMAGINEOS_FORCE_COMPOSITION=1`（**新增运维逃生阀**：视频 provider 全挂/长时限速时强制合成路径，保生成可用性）> 配方 `motion` 显式值 > 产品默认 native。
+3. `Shot.motion` 死字段状态不变（写入点仍留 M2 正规建设：创作页开关 / 分层调度）；当前默认即产品行为，无需写入点即可生效。
+4. `restart-dev.sh` 三模式：`product`（默认，无开关=产品行为）/ `native` / `composition`。
+
+### 影响
+
+- 真实用户生成预期形态：native（全镜 AI 视频）或 hybrid（部分镜回落）——队列满/限速时回落概率上升，产物标签如实反映；
+- 生成时长预期从 ~15s/镜升至 native ~60-250s/镜（含队列等待）；storyboard 租约 30 分钟内可容纳（4-8 镜），进度按镜上报续租；
+- 每日免费秒数消耗显著上升（Flash 限时免费档），双站点轮转分摊；额度耗尽日回落 composition 属预期行为（非缺陷）；
+- 评估标准零修改：Gate 7 六指标不涉及产物形态判定；被试对「AI 视频 vs 图片播放」的感知本身是 Alpha 要验证的表达链路事实。

@@ -187,7 +187,7 @@ Gate 1–6 的结论决定本测试的"底座可信度"：Content Integrity Repo
 
 - [ ] **预览可达**：预览 URL 返回 200（当前环境：`https://preview-chat-b15437ca-c5ff-4f2b-b971-7ae3748bcf4b.space-z.ai/`）；
 - [ ] **Provider 状态探测**：`node scripts/m15/probe-channels-now.mjs` —— LLM / Image（agnes 自定义）与 TTS（内置 z-ai）全部可用；任一通道长冷却 429 → 推迟开场（不得带病出数据）；
-- [ ] **运动路径决定**：默认 composition；如本轮需 native 样本 → `bash scripts/m15/restart-dev.sh native`，并在 human-test-report §1 记录配置；
+- [ ] **运动路径决定**：**默认 product（native-first，ADR-0001 Rev.3，产品负责人 2026-10-07 指令「我就想要AI视频」）**——dev server 以 `bash scripts/m15/restart-dev.sh product` 启动（无开关 = 产品行为：逐镜 AI 视频、失败回落合成）；如遇视频 provider 全挂 → `restart-dev.sh composition`（运维逃生阀）并在 human-test-report §1 记录；见 report §0.5.9/§0.5.10；
 - [ ] **导出预演**：`node scripts/m15/export-human-test.mjs --since="<当日测试开始时刻>"` → 0 被试属预期，确认链路可用；
 - [ ] **种子隔离**：被试一律使用全新浏览器会话/无痕窗口（每被试 = 独立匿名 User；种子与演示账号 `isDemo=true` 自动排除）；
 - [ ] **环境就绪**：测试 Wi-Fi（手机段）、录像设备、知情同意一页纸、逐字稿卡（§3.0）与记录表（§5）人手一套。

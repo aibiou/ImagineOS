@@ -15,6 +15,20 @@ import { db } from '@/lib/db'
 export const JOB_STATUSES = ['queued', 'claimed', 'running', 'succeeded', 'failed', 'timeout'] as const
 export type JobStatus = (typeof JOB_STATUSES)[number]
 
+/** 确定性失败（前置条件不满足 / 数据形态错误）：重试不可能成功，fail-fast 落用户可见错误。
+ *  实证（2026-10-07 08:31 门禁期间）：「配方中没有镜头」被无差别重试 3 轮、1 秒内耗尽——
+ *  重试风暴无产出且拖慢用户可见的失败反馈。 */
+export class NonRetryableJobError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'NonRetryableJobError'
+  }
+}
+
+/** 可重试失败的重入队退避基数：fail() 回队时按 retryCount 递增（15s/30s/45s…）。
+ *  退避通过 leaseExpiresAt 表达「最早可认领时间」（claimNext 过滤）——SQLite 队列无独立调度字段，复用租约语义。 */
+export const RETRY_BACKOFF_BASE_MS = 15_000
+
 export interface JobInput {
   contentId: string
   versionId: string | null
@@ -127,10 +141,14 @@ export const jobService = {
     return job
   },
 
-  /** 乐观锁 claim：UPDATE ... WHERE status='queued'，并发下只有一个 worker 得手 */
+  /** 乐观锁 claim：UPDATE ... WHERE status='queued'，并发下只有一个 worker 得手；
+   *  退避窗口内（leaseExpiresAt 在未来）的 requeued Job 不认领——防连续失败重试风暴 */
   async claimNext(): Promise<{ id: string; type: string; inputJson: string; contentId: string; versionId: string | null; retryCount: number } | null> {
     const candidates = await db.generationJob.findMany({
-      where: { status: 'queued' },
+      where: {
+        status: 'queued',
+        OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: new Date() } }],
+      },
       orderBy: { createdAt: 'asc' },
       take: 5,
     })
@@ -199,13 +217,15 @@ export const jobService = {
     if (!job) return 'failed'
     const retryable = opts?.retryable ?? true
     if (retryable && job.retryCount < job.maxRetries) {
+      // 退避递增：第 1 次回队 15s 后可再认领，之后 30s/45s…（防 1 秒内烧完全部重试）
+      const backoffMs = RETRY_BACKOFF_BASE_MS * (job.retryCount + 1)
       await db.generationJob.update({
         where: { id: jobId },
         data: {
           status: 'queued',
           retryCount: job.retryCount + 1,
           error: error.slice(0, 1000),
-          leaseExpiresAt: null,
+          leaseExpiresAt: new Date(Date.now() + backoffMs),
         },
       })
       return 'requeued'

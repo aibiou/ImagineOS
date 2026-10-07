@@ -12,14 +12,14 @@ import { join, resolve } from 'node:path'
 
 import { router, hasVideoShotProvider } from '@/ai/router/registry'
 import type { ImageSize, ProviderCallContext } from '@/ai/router/types'
-import { jobService } from '@/core/jobs/job-service'
+import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
 import { versionRepo } from '@/core/repositories/version-repo'
 import { contentService } from '@/core/content/content-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core/content/schemas'
-import { storyboardModeDecision } from '@/core/content/storyboard-mode'
+import { motionModeFor, storyboardModeDecision } from '@/core/content/storyboard-mode'
 import { composeVideo, cleanupWorkDir } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
 import { db } from '@/lib/db'
@@ -31,7 +31,12 @@ interface JobPayload {
 }
 
 function parseJobPayload(inputJson: string): JobPayload {
-  const parsed = JSON.parse(inputJson || '{}') as Partial<JobPayload>
+  let parsed: Partial<JobPayload>
+  try {
+    parsed = JSON.parse(inputJson || '{}') as Partial<JobPayload>
+  } catch {
+    throw new NonRetryableJobError('Job 参数损坏（payload 非法 JSON）')
+  }
   return {
     contentId: parsed.contentId ?? '',
     versionId: parsed.versionId ?? null,
@@ -41,11 +46,16 @@ function parseJobPayload(inputJson: string): JobPayload {
 
 async function loadContext(payload: JobPayload) {
   const content = await contentRepo.findById(db, payload.contentId)
-  if (!content) throw new Error(`作品不存在：${payload.contentId}`)
+  if (!content) throw new NonRetryableJobError(`作品不存在：${payload.contentId}`)
   const versionId = payload.versionId ?? content.currentVersionId
   const version = versionId ? await versionRepo.findById(db, versionId) : null
-  if (!version) throw new Error('作品没有可生成的版本（配方缺失）')
-  const structure: VersionStructure = parseStructure(version.structureJson)
+  if (!version) throw new NonRetryableJobError('作品没有可生成的版本（配方缺失）')
+  let structure: VersionStructure
+  try {
+    structure = parseStructure(version.structureJson)
+  } catch {
+    throw new NonRetryableJobError('配方数据损坏（无法解析版本结构），请在分镜步骤重新生成')
+  }
   return { content, version, structure }
 }
 
@@ -64,10 +74,10 @@ function imagePromptFor(shot: ShotSnapshot, structure: VersionStructure): string
   return `${base}. Visual style: ${style}. No text, no watermark, no subtitles in image.`
 }
 
-/** 镜头运动路径：配方字段优先，评估开关 IMAGINEOS_FORCE_NATIVE=1 强制 native（M1.5 Gate 6） */
-function motionModeFor(shot: ShotSnapshot): 'composition' | 'native' {
-  if (process.env.IMAGINEOS_FORCE_NATIVE === '1') return 'native'
-  return shot.motion ?? 'composition'
+/** 运动环境开关（ADR-0001 Rev.3：产品默认 native-first；双开关均为运维/评估逃生阀） */
+const MOTION_ENV = {
+  forceNative: process.env.IMAGINEOS_FORCE_NATIVE === '1',
+  forceComposition: process.env.IMAGINEOS_FORCE_COMPOSITION === '1',
 }
 
 /** 图生视频运动提示词：首帧已定画面，描述的是“这一镜怎么动起来” */
@@ -108,12 +118,12 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     actorId: payload.actorId,
   }
   const shots = allShots(structure)
-  if (shots.length === 0) throw new Error('配方中没有镜头（先完成分镜）')
+  if (shots.length === 0) throw new NonRetryableJobError('配方中没有镜头（先完成分镜）')
   const size = imageSizeFor(structure)
 
-  // ---- 路由决策日志（审计 R3）：composition 路径此前零记录，产物形态只能靠零记账反推 ----
-  // 意图口径；实际产物以 computeGenerationMode（shotAssets）为准，两者差异 = 回落证据
-  const modeDecision = storyboardModeDecision(shots, process.env.IMAGINEOS_FORCE_NATIVE === '1')
+  // ---- 路由决策日志（审计 R3）：意图口径；实际产物以 computeGenerationMode（shotAssets）为准，
+  // 两者差异 = 回落证据（native-fallback 事件逐镜头补充原因）
+  const modeDecision = storyboardModeDecision(shots, MOTION_ENV.forceNative, MOTION_ENV.forceComposition)
   await provenanceRepo.append(db, {
     contentId: content.id,
     versionId: version.id,
@@ -146,8 +156,8 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       imageAssetId: imageAsset.id,
     }
 
-    // native 路径（M1.5 Gate 6）：首帧图生视频；失败回落组合式（不丢用户工作）
-    if (motionModeFor(shot) === 'native' && hasVideoShotProvider()) {
+    // native 路径（ADR-0001 Rev.3 产品默认）：首帧图生视频；失败逐镜回落组合式（不丢用户工作）
+    if (motionModeFor(shot, MOTION_ENV) === 'native' && hasVideoShotProvider()) {
       try {
         const { result: videoResult } = await router.video(
           {
@@ -381,8 +391,8 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
 
 export async function executeJob(jobId: string, type: string, inputJson: string): Promise<void> {
   const payload = parseJobPayload(inputJson)
-  if (!payload.contentId) throw new Error('Job 缺少 contentId')
+  if (!payload.contentId) throw new NonRetryableJobError('Job 缺少 contentId')
   if (type === 'video.storyboard') return executeStoryboardJob(jobId, payload)
   if (type === 'video.render') return executeRenderJob(jobId, payload)
-  throw new Error(`未知 Job 类型：${type}`)
+  throw new NonRetryableJobError(`未知 Job 类型：${type}`)
 }

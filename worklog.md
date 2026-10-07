@@ -503,3 +503,24 @@ Stage Summary:
 - 官方文档复核完成：双站同构、Flash 限时免费、视频 RPM 1 确认；双 provider 轮转合规性获官方限制池规则背书（独立部署 = 独立额度池）
 - 现有实现与官方最佳实践零偏差（轮询间隔保守侧、model_name 恒带、Flash 参数全部合规）；唯一遗留风险 first_frame data URI 形态待队列窗口实测
 - 失败原因可观测性补齐：Generation 失败记账从「无原因」到「error 落 outputJson」
+
+---
+Task ID: gate7-product-hardening-008
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人双指令——①「你把产品功能做好，至于作品用户自己体验」（终止我方 native 采样，额度让位）②「我就想要AI视频，不是AI图片播放」（产品默认翻转 native-first）+ 完成后提交远端 git
+
+Work Log:
+- 收口上一轮遗留：确认双站 data URI 验证旗均已立（agnes-com 278s 全链 + agnes-cn 12:18 salvage 抢救收割 0.78MB/704x1280）——R1 形态风险闭合；g6-native 孤儿 job 已自然 succeeded（pkill 前跑完），supervise 不再重启；dev server 切回默认模式
+- 实证三缺陷（DB 取证）：①08:31 门禁期间「配方中没有镜头」确定性错误被 worker 无差别重试 3 轮 1 秒耗尽（测试遗留 job 被生产 worker 执行）②重试零退避（429/503 场景重试风暴）③vitest 直写生产库 custom.db（error='x' 记录为 generation-failure.test.ts:92 写入）
+- 修复一 fail-fast：job-service 导出 NonRetryableJobError；pipeline-executor 全部结构性前置条件（作品不存在/配方缺失/无镜头/payload 坏 JSON/未知类型/结构损坏）改抛该类型；worker catch 识别 → retryable:false 一次终态 + 用户可见指引
+- 修复二 退避：fail() 回队按 retryCount 递增（RETRY_BACKOFF_BASE_MS=15s → 15/30/45s），经 leaseExpiresAt 表达最早可认领时间，claimNext 过滤退避窗口；退避中 queued Job 仍算活跃（进度轮询不闪断）
+- 修复三 测试库隔离：vitest.config env DATABASE_URL=file:db/test.db + tests/global-setup.ts 每轮删库重建；跑批前后 custom.db 计数 91/727/215 零变化实证隔离
+- 产品默认翻转（指令②）：storyboard-mode.ts 重写为单一事实源（motionModeFor + storyboardModeDecision 双导出），缺省 composition→native；新增 IMAGINEOS_FORCE_COMPOSITION=1 运维逃生阀；pipeline-executor 删本地副本改引用；restart-dev.sh 三模式（product 默认/native/composition）；dev server 已以 product 模式运行
+- 文档：ADR-0001 Rev.3（触发/前置依据/决定/影响四段）；m15 报告 §0.5.9（data URI 闭合+硬化三项）§0.5.10（native-first）；human-test-plan 运动路径条目改 product 默认
+- 门禁：tsc ✓ / eslint ✓ / vitest 104/104（97 基线 + 7 新增：重试策略 4 + 运动决策重写 9-旧 6）；db/*.db 已在 gitignore（test.db 不入库）
+- 提交：单 commit 捆绑（pipeline-executor 同时承载两类改动无法文件级拆分）；推送待产品负责人新临时 token
+
+Stage Summary:
+- 产品行为变更：默认 native-first（ADR-0001 Rev.3）——用户生成 = AI 视频模型逐镜产物，失败逐镜回落合成（诚实标签 native/hybrid/composition 不变）；预期时长 15s/镜 → 60-250s/镜
+- 三项健壮性修复均有同日实证与回归测试覆盖；测试与生产库彻底隔离，额度零误耗
+- 遗留：首次真实用户生成将实证 product 模式全链（本侧零额外采样，按指令①交由用户体验）；推送需新 token

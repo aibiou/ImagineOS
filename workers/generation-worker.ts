@@ -4,7 +4,7 @@
 // 单进程内单循环（Alpha 单实例）；接口按可替换队列 worker 设计。
 // 测试直接调用 runOneTick()，不启动定时器。
 
-import { jobService } from '@/core/jobs/job-service'
+import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
 import { executeJob } from './pipeline-executor'
 
 const TICK_INTERVAL_MS = 2500
@@ -25,8 +25,10 @@ export async function runOneTick(): Promise<boolean> {
     await executeJob(job.id, job.type, job.inputJson)
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e)
-    const outcome = await jobService.fail(job.id, message)
-    console.warn(`[worker] Job ${job.id}（${job.type}）失败 → ${outcome}：${message}`)
+    // 确定性失败（前置条件不满足）fail-fast：立即终态 + 用户可见指引，不烧重试
+    const retryable = !(e instanceof NonRetryableJobError)
+    const outcome = await jobService.fail(job.id, message, { retryable })
+    console.warn(`[worker] Job ${job.id}（${job.type}）${retryable ? '失败' : '确定性失败（不重试）'} → ${outcome}：${message}`)
   }
   return true
 }
