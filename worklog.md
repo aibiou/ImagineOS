@@ -388,3 +388,17 @@ Stage Summary:
 - 「native 可用但默认关闭」确认属实——这是 Alpha 设计使然（human-test-plan §10 记录在案），非缺陷；但用户误导问题真实存在，已用「生成模式」徽章解决
 - 生成模式口径：最近成功 storyboard Job 的 shotAssets（带 videoAssetId 镜头数）——真实产物路径，非配置推断；hybrid 形态（Native Golden 1/5）诚实展示
 - M2 冻结例外依据：测试执行期用户可见性缺陷（与 §0.5.5 同类），评估标准零修改
+
+---
+Task ID: gate7-push-002
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人提供临时 token，推送两次线上缺陷处置积压 commit（gate7-incident-001/002）
+
+Work Log:
+- 核实 git 状态：工作区干净，main 领先远端 2 commit（95bea90 失败可见性铁律 + 881cff0 生成模式徽章），均属 M2 冻结例外（线上缺陷处置）并有完整验证记录（79/79 vitest + UI 实测截图）
+- 使用临时 token 推送：6559bb8..881cff0 main -> main 成功
+- 推送后确认：main 与 origin/main 同步，无未推送积压
+
+Stage Summary:
+- 两次 Gate 7 期间线上缺陷处置（失败传导/看门狗/失败卡 + 生成模式三态徽章）已全部落远端
+- 本 session 零代码改动，纯推送操作；token 为临时凭据不再复用
