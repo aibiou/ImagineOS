@@ -9,6 +9,7 @@ import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   BadgeCheck,
@@ -22,6 +23,7 @@ import {
   PenLine,
   Play,
   Rocket,
+  RotateCcw,
   Sparkles,
   Wand2,
 } from 'lucide-react'
@@ -54,7 +56,8 @@ interface CreationBundle {
   plan: { directions: Array<{ id: string; name: string; oneLiner: string; emotion?: string; visualDirection?: string; expectedDurationSec?: number }> | null; concept: { directionId?: string; name?: string; oneLiner?: string; emotion?: string; visualDirection?: string } | null }
   story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; scenes: Array<{ index: number; summary?: string; location?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
   version: { number: number; changelog: string | null; createdAt: string } | null
-  job: { id: string; type: string; status: string; retryCount: number; stage?: string; label?: string; current?: number; total?: number; progress?: number } | null
+  job: { id: string; type: string; status: string; retryCount: number; stage?: string; label?: string; current?: number; total?: number; progress?: number; error?: string | null; failedAt?: string } | null
+  lastError: { code: string; message: string; at: string; jobId: string | null } | null
   assets: {
     final: { url: string; durationMs: number | null } | null
     poster: { url: string } | null
@@ -138,8 +141,14 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
   // 镜头列表（Hooks 必须在条件返回之前）
   const shots = useMemo(() => (bundle?.story?.scenes ?? []).flatMap((s) => s.shots), [bundle?.story])
 
-  // 生成中轮询（UX 原则五：每步可见）
-  const generating = status === 'GENERATING' || status === 'RENDERING' || (bundle?.job != null && ['queued', 'claimed', 'running'].includes(bundle.job.status))
+  // 生成失败判定：无活跃 Job 且有失败标记 / 终态失败 Job（不再无限「AI 生成中」）
+  const jobActive = bundle?.job != null && ['queued', 'claimed', 'running'].includes(bundle.job.status)
+  const jobFailed = bundle?.job != null && (bundle.job.status === 'failed' || bundle.job.status === 'timeout')
+  const generationFailed =
+    (status === 'GENERATING' || status === 'RENDERING') && !jobActive && (jobFailed || bundle?.lastError != null)
+
+  // 生成中轮询（UX 原则五：每步可见；失败态停止轮询——显示错误与重试入口）
+  const generating = !generationFailed && (status === 'GENERATING' || status === 'RENDERING' || jobActive)
   useEffect(() => {
     if (!generating) return
     const t = setInterval(() => void load(true), 2500)
@@ -155,6 +164,18 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     },
     [],
   )
+
+  // 首页「去创作空间改这一版」跳转承接：?revise=<用户的话>（fireOnce 只消费一次）
+  useEffect(() => {
+    if (!bundle) return
+    void fireOnce(`revise-${bundle.content.id}`, async () => {
+      const revise = new URLSearchParams(window.location.search).get('revise')
+      if (!revise) return
+      setRevisionText(revise)
+      if (status === 'REVIEW' || status === 'READY' || status === 'PUBLISHED') setRevisionOpen(true)
+      window.history.replaceState(null, '', `/create/${id}`)
+    })
+  }, [bundle, status, id, fireOnce])
 
   // INTENT 且无方向 → 自动生成一批
   useEffect(() => {
@@ -391,10 +412,23 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
         <StoryboardStage shots={shots} busy={busy === 'generate'} onGenerate={() => void act('generate', `/api/contents/${id}/generate`, undefined, 'AI 创作团队开工了')} />
       )}
 
-      {/* ---- GENERATING / RENDERING：进度 ---- */}
-      {(status === 'GENERATING' || status === 'RENDERING') && (
-        <GeneratingStage status={status} job={job} shots={shots} shotImages={assets.shots} />
-      )}
+      {/* ---- GENERATING / RENDERING：进度 / 失败 ---- */}
+      {(status === 'GENERATING' || status === 'RENDERING') &&
+        (generationFailed ? (
+          <GenerationFailedStage
+            status={status}
+            retryCount={job?.retryCount ?? 0}
+            error={bundle?.lastError?.message ?? job?.error ?? '生成遇到问题'}
+            busy={busy === 'regenerate' || busy === 'render'}
+            onRetry={() =>
+              void (status === 'RENDERING'
+                ? act('render', `/api/contents/${id}/render`, undefined, '重新开始合成你的视频')
+                : act('regenerate', `/api/contents/${id}/regenerate`, undefined, 'AI 创作团队再次开工'))
+            }
+          />
+        ) : (
+          <GeneratingStage status={status} job={job} shots={shots} shotImages={assets.shots} />
+        ))}
 
       {/* ---- REVIEW：预览与调整 ---- */}
       {status === 'REVIEW' && (
@@ -768,6 +802,58 @@ function StoryboardStage({
         </Button>
         <p className="text-xs text-zinc-600">画面与配音完成后会叫你来预览</p>
       </div>
+    </motion.section>
+  )
+}
+
+// ---------- GENERATING / RENDERING：失败（错误必须可见 + 永不无限转圈） ----------
+
+function GenerationFailedStage({
+  status,
+  error,
+  retryCount,
+  busy,
+  onRetry,
+}: {
+  status: string
+  error: string
+  retryCount: number
+  busy: boolean
+  onRetry: () => void
+}) {
+  const isRender = status === 'RENDERING'
+  return (
+    <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
+      <Card className="border-red-400/25 bg-zinc-900/60">
+        <CardContent className="space-y-4 p-6">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+              <AlertTriangle className="size-5 text-red-300" aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-zinc-100">{isRender ? '合成没有完成' : '生成没有完成'}</div>
+              <div className="text-xs text-zinc-500">你的创作和分镜都还在，随时可以再试。</div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-3">
+            <p className="break-words text-xs leading-relaxed text-zinc-400">
+              <span className="text-zinc-500">原因：</span>
+              {error}
+            </p>
+            {retryCount > 0 && (
+              <p className="mt-1 text-[11px] text-zinc-600">已自动重试 {retryCount} 次仍未成功（多为服务繁忙，稍后再试通常就好）。</p>
+            )}
+          </div>
+          <Button
+            onClick={onRetry}
+            disabled={busy}
+            className="w-full gap-2 bg-gradient-to-r from-fuchsia-500 to-amber-400 font-medium text-zinc-950 hover:from-fuchsia-400 hover:to-amber-300"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RotateCcw className="size-4" aria-hidden />}
+            {isRender ? '重新合成成片' : '重新生成'}
+          </Button>
+        </CardContent>
+      </Card>
     </motion.section>
   )
 }

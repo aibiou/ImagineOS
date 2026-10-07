@@ -76,6 +76,34 @@
 4. **回传**：记录表转录 + 导出 JSON → 填充本报告 §1–§7（人工字段与系统字段合并规则见计划 §5.1）；
 5. **裁决**：报告 §6 决策矩阵 → M2 方向确定（M2 开发冻结至此时，Final Package §5）。
 
+### 0.5.5 测试执行期线上缺陷与修复（2026-10-07 02:15，观察员上报）
+
+**现象**：真实被试作品卡「AI 生成中」无限等待。上报样本 `cmuw6r7kl014pktgk91ipxxp9`（Creation ID 转写误差一位，`k10l4` 实为 `kl014`）。
+
+**调查结论**（五点全链路追踪，scripts/m15/investigate-stuck-creation.mjs）：
+
+1. creation 创建于 10-06 04:35（Remix 衍生作品，配方字节继承，无需 plan 生成）；
+2. storyboard Job 已创建并于 10:38 执行——4 轮重试共 24 次 `image.shot` 调用全部 zai-image 429，10:39 耗尽重试标记 failed；
+3. workflow 执行日志完整（Generation 记账 24 条）；provider 确认收到请求；
+4. **根因**：`jobService.fail()` 永久失败后未传导 Content——`lastErrorJson` 字段自 M0 声明以来从未被写入（§51 的另一半从未实现），Content 永留 GENERATING、轮询 API 只返回活跃 Job（job=null）、前端无限「AI 生成中」；
+5. **次因**：被试 20:53 二次自救时落入首页旧修订对话框（POST /versions 只建版本不触发生成），加剧孤儿态。全库同类孤儿共 3 条（另 2 条为 TTS 429 同因）。
+
+**修复**（M2 冻结例外：线上缺陷处置，Final Package §5 允许）：
+
+| # | 修复 | 位置 |
+|---|------|------|
+| 1 | Job 永久失败/租约超时 → 写入 `Content.lastErrorJson`（code+message）+ `generation_failed` 溯源事件 | core/jobs/job-service.ts |
+| 2 | 孤儿看门狗：每 30s 扫描 GENERATING/RENDERING 无活跃 Job 且静默 >10min（env 可调）→ 标记超时；永不无限转圈 | job-service.sweepOrphanedGenerations + worker 循环 |
+| 3 | 入队失败同步标记（enqueue_failed）并抛出——不再留下「推进了状态但没有 Job」的窗口 | core/content/generation-flow.ts |
+| 4 | 创作页 API 暴露失败态：无活跃 Job 时回查最近终态失败 Job + lastError 字段 | api/contents/[id]/creation |
+| 5 | 创作页失败卡（错误原因 + 重新生成/重新合成按钮）+ 失败态停止 2.5s 轮询；startRender 支持 RENDERING 无活跃 Job 重入（镜像 M1.5 regenerate 修复模式） | app/create/[id]/page.tsx + generation-flow |
+| 6 | 首页修订对话框死路修复：改跳转创作空间（`?revise=` 承接用户输入，走完整定位→新版本→重生成链路），不再 POST /versions | app/page.tsx + create 页承接 |
+| 7 | 探索播放对话框关闭按钮不可见修复（原 `absolute -top-11` 悬于视口外裁剪区，高卡片时被裁剪；移入视频区右上角） | app/page.tsx |
+
+**验证**（全部真实执行）：单测 +9（失败传导/重试重置/看门狗/恢复端到端，全套 73/73）；E2E 失败态 API 8/8（scripts/m15/e2e-failure-surface.mjs）；UI 浏览器验证 9/9（失败卡渲染/原因可见/重试按钮/无限转圈消失/轮询停止/重生成回路 + 关闭按钮视口内/小视口可见/可关闭，scripts/m15/ui-verify-gate7-fix.sh）；看门狗自动修复 3 条存量孤儿（0 剩余）；实时传导实测（调试 Job 失败 → lastErrorJson 立即写入）。
+
+**对 Gate 7 的影响**：3 条被试卡死作品已自动标记失败并可在创作页重试；观察员如遇同类「生成没有完成」卡片，按逐字稿卡「卡住 ≥5min 预案」处理（先点重新生成，连续失败则记录中止）。本缺陷不计入 Expression Success 率的系统性偏差——被试的卡死经历属于真实用户体验数据，如实编码。
+
 ---
 
 ## 1. 测试执行概况（人工填写）

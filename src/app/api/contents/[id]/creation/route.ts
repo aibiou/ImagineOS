@@ -4,7 +4,7 @@ import { getSessionUser, domainErrorToResponse } from '../../../_lib/session'
 import { contentService } from '@/core/content/content-service'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
-import { jobService } from '@/core/jobs/job-service'
+import { jobService, parseLastError } from '@/core/jobs/job-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure } from '@/core/content/schemas'
 
@@ -36,7 +36,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // 血缘（remix 起点展示）
     const remixOf = await contentService.getRemixLineage(id)
 
-    // 活跃 Job 进度
+    // 活跃 Job 进度；无活跃 Job 时回查最近终态失败 Job（失败必须可见，不能无限「AI 生成中」）
     const activeJob = await jobService.activeJobForContent(id)
     let job: Record<string, unknown> | null = null
     if (activeJob) {
@@ -48,7 +48,22 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         retryCount: activeJob.retryCount,
         ...output,
       }
+    } else {
+      const failedJob = await jobService.latestFailedJobForContent(id)
+      if (failedJob) {
+        job = {
+          id: failedJob.id,
+          type: failedJob.type,
+          status: failedJob.status,
+          retryCount: failedJob.retryCount,
+          error: failedJob.error ?? null,
+          failedAt: failedJob.completedAt ?? failedJob.updatedAt,
+        }
+      }
     }
+
+    // 失败标记（Job 永久失败 / 看门狗超时 / 入队失败 → 对用户可见的错误消息）
+    const lastError = parseLastError(content.lastErrorJson)
 
     // 视觉资产（当前版本）
     const assets: Record<string, unknown> = { final: null, poster: null, shots: [] }
@@ -116,6 +131,9 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
       story,
       version,
       job,
+      lastError: lastError
+        ? { code: lastError.code, message: lastError.message, at: lastError.at, jobId: lastError.jobId ?? null }
+        : null,
       assets,
       remixOf: remixOf
         ? {

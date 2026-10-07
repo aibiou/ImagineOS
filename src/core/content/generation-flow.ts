@@ -10,6 +10,26 @@ import { planService } from '@/core/planning/plan-service'
 import { jobService } from '@/core/jobs/job-service'
 import { serializeStructure, type VersionStructureInput } from '@/core/content/schemas'
 
+/** 入队失败也要可见（不能留下 GENERATING 无 Job 孤儿）：标记后原样抛出，调用方拿到错误 */
+async function enqueueOrMark(contentId: string, input: Parameters<typeof jobService.enqueue>[0]) {
+  try {
+    return await jobService.enqueue(input)
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e)
+    await db.content.updateMany({
+      where: { id: contentId },
+      data: {
+        lastErrorJson: JSON.stringify({
+          code: 'enqueue_failed',
+          message: `生成任务入队失败：${message.slice(0, 400)}`,
+          at: new Date().toISOString(),
+        }),
+      },
+    }).catch(() => {})
+    throw e
+  }
+}
+
 async function requireOwnedContent(contentId: string, actorId: string) {
   const content = await contentRepo.findById(db, contentId)
   if (!content) throw new NotFoundError('作品', contentId)
@@ -85,7 +105,7 @@ export const generationFlow = {
     }
 
     await contentService.advanceStatus(contentId, 'GENERATING', actorId)
-    const job = await jobService.enqueue({
+    const job = await enqueueOrMark(contentId, {
       contentId,
       versionId,
       type: 'video.storyboard',
@@ -94,18 +114,20 @@ export const generationFlow = {
     return { versionId, versionNumber, jobId: job.id, reusedVersion }
   },
 
-  /** 渲染成片（REVIEW→RENDERING + 入队合成 Job） */
+  /** 渲染成片（REVIEW→RENDERING + 入队合成 Job；RENDERING 无活跃 Job 可重试——镜像 regenerate 的失败恢复模式） */
   async startRender(contentId: string, actorId: string): Promise<{ jobId: string }> {
     const content = await requireOwnedContent(contentId, actorId)
-    if (content.status !== 'REVIEW') {
+    if (content.status !== 'REVIEW' && content.status !== 'RENDERING') {
       throw new DomainValidationError(`只有预览满意后才能渲染成片（当前：${content.status}）`)
     }
     await assertNoActiveJob(contentId)
     const versionId = content.currentVersionId
     if (!versionId) throw new DomainValidationError('作品还没有可渲染的版本')
 
-    await contentService.advanceStatus(contentId, 'RENDERING', actorId)
-    const job = await jobService.enqueue({
+    if (content.status === 'REVIEW') {
+      await contentService.advanceStatus(contentId, 'RENDERING', actorId)
+    }
+    const job = await enqueueOrMark(contentId, {
       contentId,
       versionId,
       type: 'video.render',
@@ -130,7 +152,7 @@ export const generationFlow = {
     if (!version) throw new NotFoundError('版本', versionId)
 
     await advanceToGenerating(contentId, actorId)
-    const job = await jobService.enqueue({
+    const job = await enqueueOrMark(contentId, {
       contentId,
       versionId,
       type: 'video.storyboard',
@@ -161,7 +183,7 @@ export const generationFlow = {
     })
 
     await advanceToGenerating(contentId, actorId)
-    const job = await jobService.enqueue({
+    const job = await enqueueOrMark(contentId, {
       contentId,
       versionId: version.id,
       type: 'video.storyboard',

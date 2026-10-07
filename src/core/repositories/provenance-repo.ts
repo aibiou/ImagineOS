@@ -11,6 +11,7 @@ export const PROVENANCE_EVENT_TYPES = [
   'published',
   'unpublished',
   'ai_generated',
+  'generation_failed',
 ] as const
 
 export const provenanceRepo = {

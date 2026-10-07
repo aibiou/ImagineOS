@@ -5,6 +5,10 @@
 //   - 绝不靠长 HTTP 请求维持生成（§53）
 //   - 重试幂等：资产层 hash 去重（Asset 唯一 [hash, kind]）
 //   - 崩溃恢复：lease 过期的 claimed/running Job 自动重新入队
+// 失败可见性铁律（Gate 7 线上缺陷修复，2026-10-07）：
+//   - Job 永久失败/超时 → 必须写 Content.lastErrorJson（§51 的另一半，此前从未实现）
+//   - 新 Job 入队 → 清除 lastErrorJson（重试重置失败态）
+//   - 孤儿看门狗：GENERATING/RENDERING 无活跃 Job 且超时 → 标记错误，永不无限转圈
 
 import { db } from '@/lib/db'
 
@@ -18,6 +22,50 @@ export interface JobInput {
   [key: string]: unknown
 }
 
+/** 孤儿看门狗默认阈值：GENERATING/RENDERING 无活跃 Job 超过该时长即标记失败（可用 env 覆盖） */
+export const WATCHDOG_STALE_MS = Number(process.env.IMAGINEOS_WATCHDOG_STALE_MIN ?? 10) * 60 * 1000
+
+export interface GenerationErrorMarker {
+  code: 'generation_failed' | 'generation_timeout' | 'enqueue_failed'
+  message: string
+  jobId?: string
+  at: string
+}
+
+/** 解析 Content.lastErrorJson（脏容错：坏 JSON 返回 null） */
+export function parseLastError(raw: string | null | undefined): GenerationErrorMarker | null {
+  if (!raw) return null
+  try {
+    const parsed = JSON.parse(raw) as Partial<GenerationErrorMarker>
+    if (!parsed.code || !parsed.message) return null
+    return { code: parsed.code, message: parsed.message, jobId: parsed.jobId, at: parsed.at ?? '' }
+  } catch {
+    return null
+  }
+}
+
+/** 写入失败标记（不推进状态机位置，§51 不丢用户工作；错误对用户可见） */
+async function markGenerationError(contentId: string, marker: GenerationErrorMarker, jobId?: string): Promise<void> {
+  await db.content.update({
+    where: { id: contentId },
+    data: { lastErrorJson: JSON.stringify(marker) },
+  })
+  await db.provenance.create({
+    data: {
+      contentId,
+      versionId: null,
+      eventType: 'generation_failed',
+      actorType: 'system',
+      actorId: null,
+      provider: 'pipeline',
+      model: null,
+      payloadJson: JSON.stringify({ ...marker, jobId: jobId ?? marker.jobId ?? null }),
+    },
+  }).catch(() => {
+    // 溯源失败不阻塞错误标记本身（可诊断性优先）
+  })
+}
+
 /** 各 Job 类型的租约时长（毫秒）——lease 内 worker 必须上报进度或完成 */
 const LEASE_MS: Record<string, number> = {
   'video.storyboard': 30 * 60 * 1000,
@@ -27,7 +75,7 @@ const DEFAULT_LEASE_MS = 15 * 60 * 1000
 
 export const jobService = {
   async enqueue(input: { contentId: string; versionId: string | null; type: string; payload?: JobInput }) {
-    return db.generationJob.create({
+    const job = await db.generationJob.create({
       data: {
         contentId: input.contentId,
         versionId: input.versionId,
@@ -40,6 +88,12 @@ export const jobService = {
         }),
       },
     })
+    // 新 Job 入队 = 用户重试：清除历史失败标记（失败态复位）
+    await db.content.updateMany({
+      where: { id: input.contentId, lastErrorJson: { not: null } },
+      data: { lastErrorJson: null },
+    }).catch(() => {})
+    return job
   },
 
   /** 乐观锁 claim：UPDATE ... WHERE status='queued'，并发下只有一个 worker 得手 */
@@ -108,7 +162,7 @@ export const jobService = {
     })
   },
 
-  /** 失败：可重试 → 回队；不可重试/耗尽 → failed（用户工作无损，状态机不回滚） */
+  /** 失败：可重试 → 回队；不可重试/耗尽 → failed + Content 失败标记（错误必须对用户可见） */
   async fail(jobId: string, error: string, opts?: { retryable?: boolean }): Promise<'requeued' | 'failed'> {
     const job = await db.generationJob.findUnique({ where: { id: jobId } })
     if (!job) return 'failed'
@@ -129,10 +183,16 @@ export const jobService = {
       where: { id: jobId },
       data: { status: 'failed', error: error.slice(0, 1000), completedAt: new Date() },
     })
+    // 永久失败 → 传导到 Content（修复前：Job failed 但作品永远停在 GENERATING 转圈）
+    await markGenerationError(
+      job.contentId,
+      { code: 'generation_failed', message: error.slice(0, 500), jobId, at: new Date().toISOString() },
+      jobId,
+    ).catch(() => {})
     return 'failed'
   },
 
-  /** 崩溃恢复：lease 过期的 claimed/running → 重新入队或 timeout（T6.1.1 AC） */
+  /** 崩溃恢复：lease 过期的 claimed/running → 重新入队或 timeout（T6.1.1 AC）；timeout 同步标记 Content */
   async requeueStale(now = new Date()): Promise<number> {
     const stale = await db.generationJob.findMany({
       where: {
@@ -155,6 +215,13 @@ export const jobService = {
           data: { status: 'timeout', error: '租约过期且重试耗尽', completedAt: now },
         })
         count += res.count
+        if (res.count === 1) {
+          await markGenerationError(
+            job.contentId,
+            { code: 'generation_timeout', message: '生成超时（服务暂时不可用），你的创作没有丢，点「重新生成」再试一次。', jobId: job.id, at: now.toISOString() },
+            job.id,
+          ).catch(() => {})
+        }
       }
     }
     return count
@@ -166,6 +233,46 @@ export const jobService = {
       where: { contentId, status: { in: ['queued', 'claimed', 'running'] } },
       orderBy: { createdAt: 'desc' },
     })
+  },
+
+  /** 最近一次终态失败 Job（failed/timeout，无活跃 Job 时向用户展示失败原因） */
+  async latestFailedJobForContent(contentId: string) {
+    return db.generationJob.findFirst({
+      where: { contentId, status: { in: ['failed', 'timeout'] } },
+      orderBy: { createdAt: 'desc' },
+    })
+  },
+
+  /**
+   * 孤儿看门狗（Gate 7 修复核心）：
+   * GENERATING/RENDERING 且无任何活跃 Job 且无失败标记、静默超过阈值 → 写入超时标记。
+   * 覆盖：enqueue 失败 / 入队前异常 / 任何未来遗漏路径 / 存量脏数据。
+   * 幂等：已有 lastErrorJson 的作品跳过；有活跃 Job 的跳过。
+   */
+  async sweepOrphanedGenerations(staleMs: number = WATCHDOG_STALE_MS, now = new Date()): Promise<number> {
+    const cutoff = new Date(now.getTime() - staleMs)
+    const orphans = await db.content.findMany({
+      where: {
+        status: { in: ['GENERATING', 'RENDERING'] },
+        lastErrorJson: null,
+        updatedAt: { lt: cutoff },
+      },
+      select: { id: true },
+      take: 50,
+    })
+    let marked = 0
+    for (const content of orphans) {
+      const active = await db.generationJob.count({
+        where: { contentId: content.id, status: { in: ['queued', 'claimed', 'running'] } },
+      })
+      if (active > 0) continue // 有活跃 Job：交给 lease/requeueStale 机制
+      await markGenerationError(
+        content.id,
+        { code: 'generation_timeout', message: '生成长时间没有进展（可能遇到服务中断），你的创作没有丢，点「重新生成」再试一次。', at: now.toISOString() },
+      )
+      marked++
+    }
+    return marked
   },
 
   /** 最近一次完成的 storyboard job（render 阶段的镜头资产来源） */

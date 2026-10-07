@@ -113,7 +113,6 @@ export default function Home() {
   // 修订对话框（早期阶段的快速版本；成片后的智能修改在创作空间）
   const [revisionFor, setRevisionFor] = useState<ContentListItem | null>(null)
   const [revisionText, setRevisionText] = useState('')
-  const [revisionBusy, setRevisionBusy] = useState(false)
 
   // 版本时间线对话框
   const [timelineFor, setTimelineFor] = useState<ContentListItem | null>(null)
@@ -244,21 +243,17 @@ export default function Home() {
     [loadLists, openTimeline, timelineFor, toast],
   )
 
-  const submitRevision = useCallback(async () => {
+  const submitRevision = useCallback(() => {
     if (!revisionFor) return
     const text = revisionText.trim()
     if (!text) {
       toast({ title: COPY.revisionTitle, description: '用一句话描述，比如「再温暖一点」。' })
       return
     }
-    setRevisionBusy(true)
-    const ok = await mutateContent(revisionFor.id, '/versions', { method: 'revision', changelog: text }, '新一版已开始')
-    setRevisionBusy(false)
-    if (ok) {
-      setRevisionFor(null)
-      setRevisionText('')
-    }
-  }, [mutateContent, revisionFor, revisionText, toast])
+    // Gate 7 修复：旧实现 POST /versions 只创建版本、不触发生成（真实用户踩中：
+    // 修订「再温暖一点」后永远停在 GENERATING）。改为跳转创作空间，走完整修订链路。
+    router.push(`/create/${revisionFor.id}?revise=${encodeURIComponent(text)}`)
+  }, [revisionFor, revisionText, toast, router])
 
   const remix = useCallback(
     async (item: { id: string; title: string }) => {
@@ -488,12 +483,11 @@ export default function Home() {
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="ghost" onClick={() => setRevisionFor(null)} className="text-zinc-400">取消</Button>
             <Button
-              disabled={revisionBusy}
-              onClick={() => void submitRevision()}
+              onClick={() => submitRevision()}
               className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90"
             >
-              {revisionBusy && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              开始新的一版
+              去创作空间改这一版
+              <ArrowRight className="size-4" aria-hidden />
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -568,7 +562,7 @@ export default function Home() {
           <div className="relative w-full max-w-md">
             <button
               onClick={() => setPlayingItem(null)}
-              className="absolute -top-11 right-0 z-10 flex items-center gap-1.5 rounded-lg border border-white/10 bg-zinc-900/80 px-3 py-1.5 text-xs text-zinc-300 transition hover:text-white"
+              className="absolute right-3 top-3 z-20 flex items-center gap-1.5 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 text-xs text-zinc-200 backdrop-blur-md transition hover:bg-black/80 hover:text-white"
               aria-label="关闭"
             >
               <X className="size-3.5" aria-hidden /> 关闭
@@ -582,10 +576,10 @@ export default function Home() {
                   playsInline
                   poster={playingItem.posterUrl ?? undefined}
                   src={playingItem.videoUrl}
-                  className="aspect-[9/16] max-h-[70vh] w-full bg-black object-contain"
+                  className="aspect-[9/16] max-h-[62vh] w-full bg-black object-contain"
                 />
               ) : (
-                <div className="flex aspect-[9/16] max-h-[70vh] items-center justify-center bg-zinc-950">
+                <div className="flex aspect-[9/16] max-h-[62vh] items-center justify-center bg-zinc-950">
                   <Loader2 className="size-8 animate-spin text-zinc-600" aria-hidden />
                 </div>
               )}

@@ -351,3 +351,22 @@ Stage Summary:
 - 指令 §4 状态：Gate 7 Final Report = m15-human-test-report.md（系统侧章节收口完成；Final 判定待 ≥10 真人数据回填后自动收口，报告 §6 决策矩阵直接输出 M2 方向）
 - 指令 §5 执行中：M2 开发冻结（Final Package §5 冻结声明继续生效；本 session 零产品代码改动）
 - 下一步（人工阶段）：产品负责人招募被试 → 按 observer kit 执行测试日 → 回传记录表 + 导出 JSON → 本 agent 负责数据合并、报告 §1-§7 填充与 M2 方向裁决
+
+---
+Task ID: gate7-incident-001
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人上报线上缺陷——真实用户创作卡「AI 生成中」无限等待（Creation cmuw6r7k10l4pktgk91ipxxp9，ID 转写误差实为 cmuw6r7kl014pktgk91ipxxp9）+ 探索作品关闭按钮不可见。要求：先追踪不先修 UI；确认 GENERATING 无 job 孤儿态；任何异常必须 FAILED+error message；增加 generation timeout watchdog。
+
+Work Log:
+- 全链路调查（investigate-stuck-creation.mjs / find-stuck-creation.mjs / deep-dive-timeline.mjs）：该作品 10-06 04:35 创建（Remix 衍生），10:38 storyboard Job 执行 4 轮重试 24 次 image.shot 全部 zai-image 429 → 10:39 耗尽重试 failed；plan 为 Remix 继承无需生成；provider 确认收到请求（24 条记账）；**根因 = jobService.fail() 永久失败后不传导 Content（lastErrorJson 自 M0 声明从未写入）→ GENERATING 永驻 + 轮询 API 只返活跃 Job（job=null）→ 前端无限转圈**；次因 = 被试 20:53 自救落入首页旧修订对话框（POST /versions 只建版本不生成，v2「再温暖一点」成孤儿）。全库同类孤儿 3 条（另 2 条 TTS 429 同因）
+- 排除一次虚惊：page.tsx「utateContent 损伤」为工具输出渲染层吞 `[m` 序列 + grep 子串误报的连环假象（hexdump 5b 6d 证实原文件完好）
+- 修复七件（M2 冻结例外=线上缺陷处置）：①fail()/requeueStale timeout → 写 Content.lastErrorJson + generation_failed 溯源 ②孤儿看门狗 sweepOrphanedGenerations（worker 每 12 tick≈30s 扫描，GENERATING/RENDERING 无活跃 Job 静默>10min → 标记超时，IMAGINEOS_WATCHDOG_STALE_MIN 可调）③enqueue 失败同步标记 enqueue_failed 并抛出 ④creation API 失败态暴露（无活跃 Job 回查终态失败 Job + lastError 字段）⑤创作页失败卡（原因+重新生成/重新合成）+ 失败态停止轮询 + startRender 允许 RENDERING 无活跃 Job 重入 ⑥首页修订对话框改跳创作空间（?revise= 承接，fireOnce 只消费一次）⑦探索关闭按钮从 absolute -top-11 视口外裁剪区移入视频区右上角（top-3 right-3，小视口可测）
+- 验证（全真实执行）：vitest +9 → 73/73；lint ✓ typecheck ✓（清 tsbuildinfo 全量）；E2E API 失败态 8/8（e2e-failure-surface.mjs）；UI 浏览器 9/9（ui-verify-gate7-fix.sh：失败卡/原因/重试按钮/无无限转圈/轮询停止/重生成回路/关闭按钮视口内+小视口+可关闭）；看门狗自动修复 3 条存量孤儿 0 剩余；实时传导实测（调试 Job 失败 → lastErrorJson 即写）；验证数据全部清理（content+匿名 user 级联删除，108 内容/23 发布与清理前一致，零真实数据损失）
+- 期间两个测试装置缺陷修复：agent-browser eval 返回带引号未剥离（URL 404 假失败）；调试内容缺版本使 regenerate 正确拒绝（补最小版本后验证通过）
+- dev server 已以 composition 模式重启加载新代码（worker watchdog 生效中）；文档：m15-human-test-report.md 新增 §0.5.5 线上缺陷与修复（含对 Gate 7 的影响与观察员处置指引）
+
+Stage Summary:
+- 用户怀疑证实：GENERATING 无（活跃）Job 孤儿态真实存在——3 条，全部因「Job 失败不传导」产生；看门狗上线后已自动全部标记失败，被试可在创作页看到错误原因并一键重试
+- 「任何异常必须 FAILED + error message」已落地为三层：Job 层（failed/timeout + error）、Content 层（lastErrorJson + 溯源事件）、用户层（失败卡 + 原因 + 重试按钮）；「不能永久停留 GENERATING」由看门狗兜底（最坏 10 分钟内转为可见失败态）
+- 探索关闭按钮、首页修订死路两个真实用户可感知缺陷一并修复
+- 本缺陷属 M2 冻结例外（线上缺陷处置）；修复记录已入 Gate 7 报告 §0.5.5，对 Expression Success 率编码无系统性豁免（卡死经历如实计入被试体验数据）
