@@ -199,6 +199,8 @@ export const planService = {
       ...currentStructure,
       concept: concept ?? currentStructure?.concept,
       story: workingStory ?? currentStructure?.story,
+      // 人物小传（欲望/障碍/弧光/视觉锚点）随配方密封——执行层注入 imagePrompt 的原料
+      characters: workingStory?.characters ?? currentStructure?.characters ?? [],
       intentSummary: intentRow?.rawExpression ? intentRow.rawExpression.slice(0, 120) : currentStructure?.intentSummary,
     }
     return structure

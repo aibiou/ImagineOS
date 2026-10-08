@@ -28,6 +28,7 @@ import {
   Rocket,
   RotateCcw,
   Sparkles,
+  Users,
   Wand2,
 } from 'lucide-react'
 
@@ -38,7 +39,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, STAGE_LABEL, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
+import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -57,7 +58,7 @@ interface CreationBundle {
   }
   intent: { rawExpression: string; record: { fields: Record<string, unknown>; sources: Record<string, string>; interview?: { asked: string[]; remainingBudget: number; done: boolean } } | null } | null
   plan: { directions: Array<{ id: string; name: string; oneLiner: string; emotion?: string; visualDirection?: string; expectedDurationSec?: number }> | null; concept: { directionId?: string; name?: string; oneLiner?: string; emotion?: string; visualDirection?: string } | null }
-  story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; scenes: Array<{ index: number; summary?: string; location?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
+  story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; characters?: Array<{ name: string; desire?: string; obstacle?: string; arc?: string }>; scenes: Array<{ index: number; summary?: string; location?: string; dramaticFunction?: string; valueShift?: string; timeOfDay?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; shotSize?: string; transition?: string; charactersInShot?: string[]; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
   version: { number: number; changelog: string | null; createdAt: string } | null
   job: { id: string; type: string; status: string; retryCount: number; stage?: string; label?: string; current?: number; total?: number; progress?: number; error?: string | null; failedAt?: string } | null
   lastError: { code: string; message: string; at: string; jobId: string | null } | null
@@ -742,13 +743,35 @@ function StoryStage({
         {story.scenes.map((s) => (
           <div key={s.index} className="flex gap-4 rounded-xl border border-white/10 bg-zinc-900/40 p-4">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-zinc-900 text-xs text-zinc-400">{s.index + 1}</span>
-            <div>
+            <div className="min-w-0">
               <p className="text-sm leading-relaxed text-zinc-200">{s.summary}</p>
-              {s.location && <p className="mt-1 text-xs text-zinc-500">场景：{s.location}</p>}
+              <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
+                {s.location && <span>场景：{s.location}{s.timeOfDay ? ` · ${s.timeOfDay}` : ''}</span>}
+                {s.dramaticFunction && (
+                  <span className="rounded-full border border-fuchsia-500/20 bg-fuchsia-500/10 px-2 py-0.5 text-fuchsia-300/80">{SCENE_FUNCTION_LABEL[s.dramaticFunction] ?? s.dramaticFunction}</span>
+                )}
+                {s.valueShift && <span className="text-zinc-400">情绪 {s.valueShift}</span>}
+              </div>
             </div>
           </div>
         ))}
       </div>
+
+      {story.characters?.length ? (
+        <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
+          <div className="flex items-center gap-2 text-xs text-zinc-500"><Users className="size-3.5" aria-hidden /> 人物</div>
+          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+            {story.characters.map((c) => (
+              <div key={c.name} className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
+                <p className="text-sm text-zinc-200">{c.name}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-zinc-500">
+                  {c.desire ? `想要${c.desire}` : ''}{c.obstacle ? `，但${c.obstacle}` : ''}{c.arc ? `；最后${c.arc}` : ''}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm text-zinc-500">{story.narrationStyle ? `旁白：${story.narrationStyle}` : '旁白将用第一人称讲述'}</p>
@@ -788,9 +811,13 @@ function StoryboardStage({
             <div className="min-w-0">
               <p className="text-sm leading-relaxed text-zinc-200">{shot.visualDescription}</p>
               <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-zinc-500">
+                {shot.shotSize && (
+                  <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-violet-300/90">{SHOT_SIZE_LABEL[shot.shotSize] ?? shot.shotSize}</span>
+                )}
                 {shot.cameraMotion && <span>{CAMERA_LABEL[shot.cameraMotion] ?? shot.cameraMotion}</span>}
                 {shot.durationMs && <span>{(shot.durationMs / 1000).toFixed(1)} 秒</span>}
                 {shot.emotion && <span className="text-amber-300/70">{shot.emotion}</span>}
+                {shot.transition && i < shots.length - 1 && <span>{TRANSITION_LABEL[shot.transition] ?? shot.transition}</span>}
               </div>
               {shot.narrationLine && (
                 <p className="mt-2 border-l-2 border-fuchsia-500/30 pl-2.5 text-xs italic leading-relaxed text-zinc-400">「{shot.narrationLine}」</p>
@@ -990,6 +1017,9 @@ function ReviewStage({
             <div className="min-w-0 flex-1 py-3 pr-4">
               <div className="flex items-center gap-2 text-[11px] text-zinc-500">
                 <span className="text-sm font-medium text-zinc-300">镜头 {i + 1}</span>
+                {shot.shotSize && (
+                  <span className="rounded-full border border-violet-500/25 bg-violet-500/10 px-2 py-0.5 text-violet-300/90">{SHOT_SIZE_LABEL[shot.shotSize] ?? shot.shotSize}</span>
+                )}
                 {shot.cameraMotion && <span>{CAMERA_LABEL[shot.cameraMotion] ?? shot.cameraMotion}</span>}
                 {shot.durationMs && <span>{(shot.durationMs / 1000).toFixed(1)} 秒</span>}
               </div>

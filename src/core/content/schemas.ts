@@ -46,12 +46,30 @@ export type IntentRecord = z.infer<typeof IntentRecordSchema>
 
 // ---------- 创作结构快照（ContentVersion.structureJson 的值域） ----------
 
+/** 景别（蒙太奇情绪语法：大远景定场 → 中景叙事 → 特写递进 → 大特写高潮） */
+export const SHOT_SIZES = ['extreme_wide', 'wide', 'medium', 'closeup', 'extreme_closeup'] as const
+export type ShotSize = (typeof SHOT_SIZES)[number]
+
+/** 镜头间转场（硬切/叠化/黑场淡入——情绪连接方式） */
+export const SHOT_TRANSITIONS = ['cut', 'dissolve', 'fade'] as const
+export type ShotTransition = (typeof SHOT_TRANSITIONS)[number]
+
+/** 场景戏剧功能（三幕微结构：每一场戏必须推动故事，不许「只是发生了」） */
+export const SCENE_FUNCTIONS = ['hook', 'setup', 'turn', 'climax', 'release'] as const
+export type SceneDramaticFunction = (typeof SCENE_FUNCTIONS)[number]
+
 export const ShotSnapshotSchema = z.object({
   index: z.number().int().min(0),
   visualDescription: z.string().optional(),
   /** 面向图像生成的英文提示词（执行配方的一部分，随版本密封） */
   imagePrompt: z.string().optional(),
   cameraMotion: z.string().optional(), // zoom_in | zoom_out | pan_left | pan_right | static
+  /** 景别：画面取景范围，驱动构图与情绪递进（可选，向后兼容） */
+  shotSize: z.enum(SHOT_SIZES).optional(),
+  /** 转场：与下一镜头的连接方式（末镜可缺省） */
+  transition: z.enum(SHOT_TRANSITIONS).optional(),
+  /** 本镜出现的人物（名字与 CharacterSheet.name 对齐；供执行层注入视觉锚点） */
+  charactersInShot: z.array(z.string()).optional(),
   durationMs: z.number().int().positive().optional(),
   narrationLine: z.string().optional(),
   emotion: z.string().optional(),
@@ -64,10 +82,33 @@ export const ShotSnapshotSchema = z.object({
 })
 export type ShotSnapshot = z.infer<typeof ShotSnapshotSchema>
 
+/** 人物小传（§86 Character 预留结构的落地）：驱动叙事 + 视觉一致性的双引擎 */
+export const CharacterSheetSchema = z.object({
+  name: z.string().min(1),
+  description: z.string().optional(),
+  /** 服装/造型（中文，给用户看） */
+  wardrobe: z.string().optional(),
+  /** 这个人物想要什么（欲望——故事的发动机） */
+  desire: z.string().optional(),
+  /** 什么在阻碍他（障碍——冲突的来源） */
+  obstacle: z.string().optional(),
+  /** 人物弧光：结尾比开头多了/少了什么（一句话） */
+  arc: z.string().optional(),
+  /** 英文视觉锚点（年龄/体型/发型/服装/标志性道具——执行层注入每个 imagePrompt，跨镜一致性由代码保证） */
+  visualAnchor: z.string().optional(),
+})
+export type CharacterSheet = z.infer<typeof CharacterSheetSchema>
+
 export const SceneSnapshotSchema = z.object({
   index: z.number().int().min(0),
   summary: z.string().optional(),
   location: z.string().optional(),
+  /** 戏剧功能：这场戏为什么存在（hook/setup/turn/climax/release） */
+  dramaticFunction: z.enum(SCENE_FUNCTIONS).optional(),
+  /** 价值转变：观众情绪从 X 到 Y（「平静→好奇」；无转变的场戏应被删掉） */
+  valueShift: z.string().optional(),
+  /** 时间（黄昏/深夜/清晨……——光线与情绪的锚） */
+  timeOfDay: z.string().optional(),
   shots: z.array(ShotSnapshotSchema).default([]),
 })
 export type SceneSnapshot = z.infer<typeof SceneSnapshotSchema>
@@ -75,7 +116,9 @@ export type SceneSnapshot = z.infer<typeof SceneSnapshotSchema>
 export const StorySnapshotSchema = z.object({
   logline: z.string().optional(),
   narrationStyle: z.string().optional(),
-  emotionArc: z.array(z.string()).optional(), // 情绪曲线
+  emotionArc: z.array(z.string()).optional(), // 情绪曲线（节拍数应与场景数对应）
+  /** 人物小传（故事阶段产出；密封进版本后供执行层注入视觉锚点） */
+  characters: z.array(CharacterSheetSchema).optional(),
   scenes: z.array(SceneSnapshotSchema).default([]),
 })
 export type StorySnapshot = z.infer<typeof StorySnapshotSchema>
@@ -107,9 +150,7 @@ export const VersionStructureSchema = z.object({
     })
     .optional(),
   story: StorySnapshotSchema.optional(),
-  characters: z
-    .array(z.object({ name: z.string(), description: z.string().optional(), wardrobe: z.string().optional() }))
-    .default([]),
+  characters: z.array(CharacterSheetSchema).default([]),
   world: z.object({ name: z.string().optional(), description: z.string().optional() }).optional(),
   style: z.string().optional(),
   audio: z.object({ narration: z.boolean().optional(), musicMood: z.string().optional() }).optional(),

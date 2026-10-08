@@ -700,3 +700,29 @@ Stage Summary:
 - AI 层（registry/openai-compat/provider-config 三个文件）零改动——扁平行接口是这次重构的杠杆点，链序/冷却/轮转/Generation 记账语义原样保留
 - 用户现有配置（agnes-com llm + ant-ling llm 含 Ling 免费优先级）无损迁移，主链路行为零变化
 - 迁移脚本与备份快照入 scripts/m15/（可复现）；旧表已删（schema 干净）
+
+---
+Task ID: cinema-professional-018
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人指令「配置好了，你继续专注业务影视剧情、想法实现的专业性逻辑」——创作链路影视专业化升级
+
+Work Log:
+- 前情核对：提供商化重构（017）与 Ling 接入（016）均已落库推送；用户已自行配置 agnes-com 三通道（llm+image+video 各一模型）——供给侧就绪，本轮零配置改动
+- 专业化诊断（五层缺口）：①故事无戏剧结构（场景只是事件罗列）②人物是名字标签（无欲望/障碍/弧光，wardrobe 字段从未被填充消费）③无景别体系（只有 5 运镜，蒙太奇情绪语法缺失）④人物跨镜一致性靠 prompt 规则祈祷 ⑤成片字幕（M1 遗留，实查发现 ffmpeg 内部已自动生成旁白 ASS 行——隐式清偿，待实证）
+- Schema 升级（全部 optional 向后兼容，旧密封配方零影响）：ShotSnapshot+shotSize/transition/charactersInShot；SceneSnapshot+dramaticFunction/valueShift/timeOfDay；CharacterSheet（desire/obstacle/arc/visualAnchor）；StorySnapshot.characters
+- Prompt 重写（专业性的心脏）：Story=三幕微结构（hook→setup→turn→climax→release，每场戏必须有戏剧功能与价值转变）+人物小传引擎+情绪节拍与场景一一对应+英文视觉锚点颗粒度教学；Storyboard=景别情绪语法（定场大远景→中景叙事→特写递进→大特写高潮→结尾宽长镜留白，相邻景别跳级出张力）+首3秒钩子+旁白节拍（首句钩/末句余韵）+转场语义（cut推进/dissolve进回忆/fade终结）+节奏曲线（高潮短切/结尾留白）
+- 人物一致性代码强制：新建 src/core/content/shot-prompt.ts 纯函数模块——imagePromptFor/videoPromptFor 程序化注入 visualAnchor（charactersInShot 显式标注优先、画面描述名字兜底匹配）+景别构图兜底短语；注入只发生在调用模型的时刻，不回写密封配方（版本不可变纪律）
+- plan-service.buildVersionStructure：人物小传随配方密封（characters: workingStory→currentStructure 兜底）
+- UI 呈现（语言字典先行）：SHOT_SIZE_LABEL（大远景…大特写）/TRANSITION_LABEL/SCENE_FUNCTION_LABEL 入字典；故事场景卡显示戏剧功能徽章+情绪转变+时刻；新增人物小传卡（欲望/障碍/弧光说人话）；分镜卡与预览卡显示景别徽章
+- 测试：tests/cinema-professional-logic.test.ts +13（人物小传全字段/场景戏剧功能/景别枚举拒幻觉值/锚点注入显式+兜底+零注入+story.characters兜底源/景别构图短语/视频提示词锚点/时长归一回归）→ 全量 149/149；tsc ✓ eslint ✓
+- 真实管线 E2E（「深夜面馆老板给加班女孩留第37碗面，今晚她没来」）：Story 产出 5 场完整三幕结构（寂静→悬念→温暖→失落→酸楚→释然）+ 双人物小传（老板/加班女孩全字段含锚点）；分镜 5 镜景别序列 extreme_wide→medium→closeup→extreme_closeup→wide（教科书级递进），首镜钩子「第三十七碗面，没人吃。」末镜余韵「我替她吃了。」，第2场进回忆用 dissolve 语义正确；Generation 账本：ling 独挑 8/8 LLM、agnes-image 5/5（~10s/张）、视频 agnes RPM=1 限流提交 429+zai 兜底抢 2 镜 native（诚实回落 3 镜合成 hybrid）、tts 5/5；成片 43s 720x1280
+- VLM 成片实证（glm-5v-turbo 三帧盲评）：字幕烧录 ✓（6s 帧转录出台词字幕原文）；人物一致性 ✓✓（「中年男子三帧一致：微胖、白背心、同款围裙」与 visualAnchor 逐项吻合——锚点注入从祈祷到保证的直接证据）
+- UI 浏览器验证（修表匠爷爷故事）：故事阶段六项检查全过（一句话故事/人物卡/戏剧功能/情绪转变/时刻）；分镜阶段景别/运镜/转场徽章渲染 5 卡全过；截图 cinema-story-stage.png / cinema-storyboard-stage.png 入 download/ui-e2e/
+- 清场：三条测试内容全部删除（各自会话归属精确匹配）；用户自己的 IDEA 内容保留；诊断脚本清理，E2E 驱动/证据脚本留档 scripts/m15/
+
+Stage Summary:
+- 影视专业性五层缺口全部闭合：戏剧结构（三幕微结构+价值转变）、人物引擎（欲望/障碍/弧光）、视听语法（五级景别+转场语义+节奏曲线）、首3秒钩子与旁白节拍、人物视觉一致性代码保证
+- 供给面实战矩阵：提供商化重构首次全链兑现——agnes 一把钥匙管 image+video、ant-ling 免费窗口独挑 LLM 8/8、zai 最后防线兜底；用户配置即生效零代码改动
+- 成片质量实证：字幕烧录+跨镜人物一致（VLM 独立盲评确认）+教科书景别递进
+- 已知边界（供给侧事实非代码缺陷）：agnes 视频 RPM=1 提交即 429（免费档），native 占比受限于双站轮转配置；如需全 native 需视频配额升级或多键
+- 下一步建议：修订定位器吸收新字段语义（style 层指令已兼容）；多画幅（宽屏）支持；BGM 自动配乐（ffmpeg 已支持 bgm 闪避，未接生成源）

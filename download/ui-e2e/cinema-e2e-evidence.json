@@ -1,0 +1,253 @@
+{
+  "verifiedAt": "2026-10-08T14:29:51.030Z",
+  "task": "影视专业性升级 E2E（三幕微结构/人物小传/景别语法/视觉锚点/字幕）",
+  "expression": "深夜快打烊的面馆，老板每次都会给晚归的加班女孩留最后一碗热汤面，今晚女孩没有来",
+  "contentId": "cmuzm3m870009prkssyb4qzgt",
+  "story": {
+    "logline": "老板每晚给加班女孩留最后一碗热汤面，第37晚她没来，碗底压着一张字条。",
+    "emotionArc": [
+      "悬念",
+      "温暖",
+      "失落",
+      "酸楚",
+      "释然"
+    ],
+    "characters": [
+      {
+        "name": "老板",
+        "hasDesire": true,
+        "desire": "每晚为加班女孩留一碗热汤面，盼她吃上口热的",
+        "hasObstacle": true,
+        "obstacle": "女孩来去匆匆，他连话都说不上；第37晚她没来",
+        "hasArc": true,
+        "arc": "从每晚留面等她，到独自吃完第37碗，把牵挂留在墙上",
+        "hasVisualAnchor": true,
+        "visualAnchor": "A Chinese noodle shop owner in his 50s, stocky, thinning black hair, white tank top under a faded apron, flour-dusted hands, warm deep-set eyes"
+      },
+      {
+        "name": "加班女孩",
+        "hasDesire": true,
+        "desire": "加班后能吃上一碗热汤面，撑过深夜",
+        "hasObstacle": true,
+        "obstacle": "工作太忙，没机会跟老板好好告别",
+        "hasArc": true,
+        "arc": "从每晚默默来吃面，到留下字条后不再出现",
+        "hasVisualAnchor": true,
+        "visualAnchor": "A Chinese woman in her late 20s, shoulder-length black hair, dark gray work coat over white blouse, tired eyes, small red earphones"
+      }
+    ],
+    "scenes": [
+      {
+        "index": 0,
+        "summary": "凌晨面馆，老板盛面盖盖，墙上粉笔划下第37道杠，蒸汽模糊霓虹",
+        "location": "深夜面馆",
+        "dramaticFunction": "hook",
+        "valueShift": "寂静→悬念",
+        "timeOfDay": "凌晨"
+      },
+      {
+        "index": 1,
+        "summary": "三十六个夜晚，女孩推门坐下埋头吃面，老板在厨房多煮一碗",
+        "location": "面馆",
+        "dramaticFunction": "setup",
+        "valueShift": "悬念→温暖",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 2,
+        "summary": "第37晚，十一点半过了，座位空着，老板擦杯子频频看钟",
+        "location": "面馆",
+        "dramaticFunction": "turn",
+        "valueShift": "温暖→失落",
+        "timeOfDay": "午夜"
+      },
+      {
+        "index": 3,
+        "summary": "打烊揭盖，热气散尽，碗底压着字条：我不用加班了，这碗您吃",
+        "location": "面馆",
+        "dramaticFunction": "climax",
+        "valueShift": "失落→酸楚",
+        "timeOfDay": "凌晨"
+      },
+      {
+        "index": 4,
+        "summary": "清晨，老板把字条别在37道杠旁，坐她的位子吃面，蒸汽散进晨光",
+        "location": "面馆",
+        "dramaticFunction": "release",
+        "valueShift": "酸楚→释然",
+        "timeOfDay": "清晨"
+      }
+    ]
+  },
+  "storyboard": {
+    "shotCount": 5,
+    "shots": [
+      {
+        "index": 0,
+        "shotSize": "extreme_wide",
+        "transition": "cut",
+        "charactersInShot": [
+          "老板"
+        ],
+        "cameraMotion": "static",
+        "durationMs": 5000,
+        "narrationLine": "第三十七碗面，没人吃。",
+        "emotion": "悬念",
+        "imagePromptLen": 365
+      },
+      {
+        "index": 0,
+        "shotSize": "medium",
+        "transition": "dissolve",
+        "charactersInShot": [
+          "加班女孩",
+          "老板"
+        ],
+        "cameraMotion": "pan_right",
+        "durationMs": 12000,
+        "narrationLine": "三十六个夜晚，她推门坐下，埋头吃面。",
+        "emotion": "温暖",
+        "imagePromptLen": 423
+      },
+      {
+        "index": 0,
+        "shotSize": "closeup",
+        "transition": "cut",
+        "charactersInShot": [
+          "老板"
+        ],
+        "cameraMotion": "zoom_in",
+        "durationMs": 10000,
+        "narrationLine": "那天十一点半过了，座位还空着。",
+        "emotion": "失落",
+        "imagePromptLen": 306
+      },
+      {
+        "index": 0,
+        "shotSize": "extreme_closeup",
+        "transition": "cut",
+        "charactersInShot": [
+          "老板"
+        ],
+        "cameraMotion": "zoom_in",
+        "durationMs": 8000,
+        "narrationLine": "碗底压着字条：我不用加班了，这碗您吃。",
+        "emotion": "酸楚",
+        "imagePromptLen": 258
+      },
+      {
+        "index": 0,
+        "shotSize": "wide",
+        "transition": "fade",
+        "charactersInShot": [
+          "老板"
+        ],
+        "cameraMotion": "pan_right",
+        "durationMs": 10000,
+        "narrationLine": "第三十七碗面，我替她吃了。",
+        "emotion": "释然",
+        "imagePromptLen": 337
+      }
+    ],
+    "sizeProgression": [
+      "extreme_wide",
+      "medium",
+      "closeup",
+      "extreme_closeup",
+      "wide"
+    ],
+    "firstNarration": "第三十七碗面，没人吃。",
+    "lastNarration": "第三十七碗面，我替她吃了。"
+  },
+  "sealedStructure": {
+    "charactersSealed": [
+      {
+        "name": "老板",
+        "hasVisualAnchor": true
+      },
+      {
+        "name": "加班女孩",
+        "hasVisualAnchor": true
+      }
+    ],
+    "sceneFunctions": [
+      "hook",
+      "setup",
+      "turn",
+      "climax",
+      "release"
+    ],
+    "shotSizes": [
+      "extreme_wide",
+      "medium",
+      "closeup",
+      "extreme_closeup",
+      "wide"
+    ],
+    "shotsWithCharactersInShot": 5
+  },
+  "generationLedger": {
+    "totalCalls": 36,
+    "succeeded": 20,
+    "failed": 16,
+    "byProvider": {
+      "text.plan @ openai-compat:ant-ling·Ling-3.1-flash": 8,
+      "image.shot @ openai-compat:agnes-com·agnes-image-2.5-flash": 5,
+      "video.shot @ openai-compat:agnes-com·agnes-video-2.5-flash": 5,
+      "video.shot @ zai-video": 12,
+      "audio.tts @ zai-tts": 6
+    },
+    "llmProviders": [
+      "openai-compat:ant-ling·Ling-3.1-flash / Ling-3.1-flash"
+    ],
+    "imageProviders": [
+      "openai-compat:agnes-com·agnes-image-2.5-flash / agnes-image-2.5-flash"
+    ],
+    "videoProviders": [
+      "openai-compat:agnes-com·agnes-video-2.5-flash / agnes-video-2.5-flash",
+      "zai-video / cogvideox-3"
+    ],
+    "ttsProviders": [
+      "zai-tts / zai-tts-tongtong"
+    ]
+  },
+  "final": {
+    "url": "/api/assets/cmuzmutz8008tprksj050qzba",
+    "durationMs": 42600
+  },
+  "review": {
+    "status": "REVIEW",
+    "generationMode": {
+      "mode": "hybrid",
+      "nativeShots": 2,
+      "totalShots": 5
+    },
+    "shotAssets": [
+      {
+        "shotIndex": 0,
+        "hasImage": true,
+        "hasAudio": true
+      },
+      {
+        "shotIndex": 1,
+        "hasImage": true,
+        "hasAudio": true
+      },
+      {
+        "shotIndex": 2,
+        "hasImage": true,
+        "hasAudio": true
+      },
+      {
+        "shotIndex": 3,
+        "hasImage": true,
+        "hasAudio": true
+      },
+      {
+        "shotIndex": 4,
+        "hasImage": true,
+        "hasAudio": true
+      }
+    ]
+  }
+}

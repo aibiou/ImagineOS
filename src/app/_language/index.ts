@@ -119,3 +119,28 @@ export const CAMERA_LABEL: Record<string, string> = {
   pan_right: '向右移动',
   static: '静静注视',
 }
+
+/** 镜头景别 → 用户语言（2026-10-08 影视专业升级：景别是观众感知距离与亲密度的语法） */
+export const SHOT_SIZE_LABEL: Record<string, string> = {
+  extreme_wide: '大远景',
+  wide: '远景',
+  medium: '中景',
+  closeup: '特写',
+  extreme_closeup: '大特写',
+}
+
+/** 镜头转场 → 用户语言 */
+export const TRANSITION_LABEL: Record<string, string> = {
+  cut: '硬切',
+  dissolve: '叠化',
+  fade: '淡出',
+}
+
+/** 场景戏剧功能 → 用户语言（三幕微结构：每场戏为什么存在） */
+export const SCENE_FUNCTION_LABEL: Record<string, string> = {
+  hook: '开场一钩',
+  setup: '铺垫',
+  turn: '转折',
+  climax: '高潮',
+  release: '落点',
+}

@@ -20,6 +20,7 @@ import { versionRepo } from '@/core/repositories/version-repo'
 import { contentService } from '@/core/content/content-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core/content/schemas'
+import { imagePromptFor, videoPromptFor } from '@/core/content/shot-prompt'
 import { motionModeFor, storyboardModeDecision } from '@/core/content/storyboard-mode'
 import { composeVideo, cleanupWorkDir } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
@@ -69,12 +70,6 @@ function imageSizeFor(_structure: VersionStructure): ImageSize {
   return '768x1344'
 }
 
-function imagePromptFor(shot: ShotSnapshot, structure: VersionStructure): string {
-  const style = structure.style ?? structure.concept?.visualDirection ?? 'cinematic, warm tone'
-  const base = shot.imagePrompt ?? shot.visualDescription ?? 'a quiet cinematic moment'
-  return `${base}. Visual style: ${style}. No text, no watermark, no subtitles in image.`
-}
-
 /** 运动环境开关（ADR-0001 Rev.3：产品默认 native-first；双开关均为运维/评估逃生阀） */
 const MOTION_ENV = {
   forceNative: process.env.IMAGINEOS_FORCE_NATIVE === '1',
@@ -84,24 +79,10 @@ const MOTION_ENV = {
 /** native 视频调用串行化（模块级：全进程一个队列）。
  *  根因（2026-10-08 E2E 实证）：IMAGE_CONCURRENCY=2 使两镜视频并发提交，而 zai key
  *  视频并发=1——后提交者 429，600ms 退避 3 连烧穿即回落合成（5 镜 4 亡）。串行化后
- *  全镜视频提交排队（提交+轮询+下载全周期互斥）；图像/TTS 并发不变。 */
+ *  全镜视频提交排队（提交+轮询+下载全周期互斥）；图像/TTS 并发不变。
+ *  图像/视频提示词统一由 shot-prompt 纯函数模块组装（含人物视觉锚点注入）——
+ *  执行层确定性增强，不回写密封配方。 */
 const serializeVideoCall = createCallSerializer()
-
-/** 图生视频运动提示词：首帧已定画面，描述的是“这一镜怎么动起来” */
-function videoPromptFor(shot: ShotSnapshot, structure: VersionStructure): string {
-  const style = structure.style ?? structure.concept?.visualDirection ?? 'cinematic, warm tone'
-  const base = shot.imagePrompt ?? shot.visualDescription ?? 'a quiet cinematic moment'
-  const cam: Record<string, string> = {
-    zoom_in: 'slow cinematic push in',
-    zoom_out: 'slow cinematic pull back',
-    pan_left: 'gentle pan to the left',
-    pan_right: 'gentle pan to the right',
-    static: 'subtle handheld drift',
-  }
-  const motion = cam[shot.cameraMotion ?? 'zoom_in'] ?? 'subtle camera drift'
-  const emotion = shot.emotion ? `, overall mood: ${shot.emotion}` : ''
-  return `${base}. Camera: ${motion}. Natural ambient movement within the scene (wind, light, fabric, subtle life), subjects move naturally. Visual style: ${style}${emotion}. No text, no watermark.`
-}
 
 /** 安全推进（Job 驱动；若 UI 侧已推进到目标态则跳过） */
 async function safeAdvance(contentId: string, to: string, actorId: string | null, note: string) {
