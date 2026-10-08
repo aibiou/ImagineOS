@@ -66,3 +66,5 @@ examples/
 .initial_snapshot.json
 upload/pasted_image_17913795[0-9]*.jpg
 .scaffold-backup/
+# 测试存储隔离（gate7-foundation-share-012）
+storage-test/

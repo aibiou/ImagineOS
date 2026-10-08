@@ -563,3 +563,22 @@ Stage Summary:
 - 底座第一块落地：作品删除全链（API+服务+文件回收+UI+确认弹窗+6 测试），用户从此可清理不想要的作品
 - 底座队列（零模型 token）：②发布分享落地页 /w/:id → ③重命名 → ④独立播放页
 - 待推送：本 commit（token 本会话内仍有效，直接推）
+
+---
+Task ID: gate7-foundation-share-012
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人授权口径确认（生成为 E2E 验证服务）+ 继续底座开发：②发布分享落地页 + 一次授权 E2E 全链实证
+
+Work Log:
+- 交付底座②分享全链：core/content/share-view.ts 读模型（访问语义与可见性闸同源+未发布防御闸）；/w/:id 服务端组件页（播放器/信息/诚实标签/Remix 血缘/SEO/真实 404）；ShareActions 客户端组件；创作页已发布态复制分享链接；首页探索弹窗分享页入口
+- 测试 tests/share-visibility.test.ts 六用例（公开可见/unlisted 直达/private 防探测/未发布防御闸/作者预览/空产物 null 安全）→ 120/120
+- E2E 全链实证（e2e-share-driver.mjs，真实用户公共 API）：表达→意图→方向→故事→分镜(5)→生成→渲染(37.6s/3.5MB)→发布→匿名分享页 200→资产伺服 200→探索收录→删除→善后 404 ✅；验证后平台零残留
+- E2E 过程工程事实：①本环境 SIGKILL 后台进程树加剧（监督者也被杀），驱动改断点续跑（cookie+状态落盘）+ 前台跑尾段；②同场实证黑盒修复（进度载荷逐镜 shotAssets 3/5）、native 回落兜底（agnes 队列满 5 镜全合成、诚实标签）、删除链 API 二验
+- 新缺陷发现+修复：测试存储隔离缺口（vitest 写真实文件漏进生产 storage/assets，27 字节 PNG 实证）→ vitest env IMAGINEOS_STORAGE_DIR=storage-test + global-setup 每轮清空；复跑实证生产目录 0 文件
+- 文档：m15 报告 §0.5.13；工具沉淀 e2e-share-driver.mjs + supervise-e2e-share.sh
+
+Stage Summary:
+- 底座②分享闭环成立：发布→有链接可看可转发→任何人可从此开始创作（Remix）→删除即善后 404
+- E2E 按授权执行一次并清场：平台 contents=0/assets=0/storage 0 文件
+- 测试隔离补全（DB 之外补上存储维度）；vitest 120/120、tsc/eslint ✓
+- 待推送：本 commit；底座队列剩余：③重命名 ④独立播放页

@@ -7,12 +7,20 @@ import { execSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
 
 const TEST_DB = '/home/z/my-project/db/test.db'
+const TEST_STORAGE = '/home/z/my-project/storage-test'
 
 export default function setup(): void {
   process.env.DATABASE_URL = `file:${TEST_DB}`
+  // 存储隔离（gate7-foundation-share-012）：测试写的真实文件每轮清空，不残留不泄漏到生产目录
+  process.env.IMAGINEOS_STORAGE_DIR = TEST_STORAGE
   // 每轮从零建库（测试自建数据，无跨轮依赖；删库失败=首轮不存在，忽略）
   try {
     rmSync(TEST_DB)
+  } catch {
+    /* 首轮或已被清理 */
+  }
+  try {
+    rmSync(TEST_STORAGE, { recursive: true, force: true })
   } catch {
     /* 首轮或已被清理 */
   }
@@ -21,5 +29,5 @@ export default function setup(): void {
     env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  console.log(`[vitest-global-setup] 测试库就绪：${TEST_DB}（与生产库 db/custom.db 隔离）`)
+  console.log(`[vitest-global-setup] 测试库就绪：${TEST_DB}（与生产库 db/custom.db 隔离）；测试存储就绪：${TEST_STORAGE}（与生产 storage/assets 隔离）`)
 }
