@@ -18,6 +18,8 @@ import {
   GitBranch,
   History,
   Images,
+  Link2,
+  Check,
   Loader2,
   MessageCircleQuestion,
   Music4,
@@ -1039,6 +1041,18 @@ function FinishStage({
   const dur = durationLabel(assets.final?.durationMs ?? null)
   const modeLabel = generationModeLabel(generationMode?.mode, generationMode?.nativeShots, generationMode?.totalShots)
   const modeDesc = generationMode ? GENERATION_MODE_DESC[generationMode.mode] : undefined
+  // 分享链接（底座②：发布后可复制 /w/:id 公开页链接）
+  const [shareCopied, setShareCopied] = useState(false)
+  const copyShareLink = useCallback(async () => {
+    const url = `${window.location.origin}/w/${content.id}`
+    try {
+      await navigator.clipboard.writeText(url)
+    } catch {
+      window.prompt('复制这个链接，发给想看的人：', url)
+    }
+    setShareCopied(true)
+    setTimeout(() => setShareCopied(false), 2000)
+  }, [content.id])
 
   // Remix 起点且还没有自己的成片：邀请生成自己的创作
   if (!hasVideo) {
@@ -1104,9 +1118,24 @@ function FinishStage({
 
       <div className="flex flex-wrap items-center gap-3">
         {published ? (
-          <Badge variant="outline" className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
-            <BadgeCheck className="size-4" aria-hidden /> 已发布 · 别人可以从这里开始创作
-          </Badge>
+          <>
+            <Badge variant="outline" className="gap-1.5 border-emerald-500/40 bg-emerald-500/10 px-4 py-2 text-sm text-emerald-300">
+              <BadgeCheck className="size-4" aria-hidden /> 已发布 · 别人可以从这里开始创作
+            </Badge>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => void copyShareLink()}
+              className="gap-1.5 border-white/15 bg-transparent text-zinc-300 hover:border-fuchsia-400/40 hover:text-white"
+            >
+              {shareCopied ? (
+                <Check className="size-3.5 text-emerald-400" aria-hidden />
+              ) : (
+                <Link2 className="size-3.5" aria-hidden />
+              )}
+              {shareCopied ? '链接已复制' : '复制分享链接'}
+            </Button>
+          </>
         ) : (
           <Button size="lg" disabled={busy != null} onClick={onPublish} className="gap-2 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-500 px-6 text-white shadow-lg shadow-emerald-500/20 transition hover:opacity-90 disabled:opacity-50">
             {busy === 'publish' ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Rocket className="size-4" aria-hidden />}

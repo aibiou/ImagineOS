@@ -694,6 +694,12 @@ export default function Home() {
                 >
                   <GitBranch className="size-4" aria-hidden /> {COPY.remixCta}
                 </Button>
+                <a
+                  href={`/w/${playingItem.id}`}
+                  className="flex items-center justify-center gap-1.5 rounded-lg py-1 text-xs text-zinc-500 transition hover:text-white"
+                >
+                  去作品分享页看看 <ArrowRight className="size-3" aria-hidden />
+                </a>
               </div>
             </div>
           </div>
