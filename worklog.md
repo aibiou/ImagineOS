@@ -543,3 +543,23 @@ Stage Summary:
 - 「黑盒」黑盒修复全链闭环：图片秒级逐格长出、AI 视频 60–250s/镜后补齐、进度条诚实计镜——native-first 时代 UX 原则五完整成立
 - 前端零结构改动（组件既有能力解锁），回归测试锁死四条语义
 - 待推送：需产品负责人新临时 token
+
+---
+Task ID: gate7-foundation-delete-011
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人方向纠偏「底座优先，不要闷头生成作品」——①恢复被回收的运行环境 ②盘点底座缺口 ③交付第一块底座：作品删除全链
+
+Work Log:
+- 环境灾备（两条消息之间容器被回收，工作树仅剩 docs 脚手架）：本会话 token 验活 → fetch origin/main（4fa97bb，全部代码安全在 GitHub）→ reset --hard 完整恢复 66 依赖工作树；bun install 8.7s；prisma generate + db push 重建**全新空库**（19 表，零历史作品——平台干净交付）；restart-dev.sh product 模式重启（首页 200，FORCE 双开关空）。脚手架原始 docs 备份至 .scaffold-backup/
+- 上轮遗留补记：gate7-blackbox-push-010（4fa97bb 推送）已完成，该 worklog 段随旧容器丢失，此处落账
+- 方向纠偏理解：用户要的是「能创作、能保存、能管理、能分享」的平台底座；我方采样两轮前已终止，本轮零生成、零模型 token
+- 底座盘点（代码级实证）：已有=作品库首页/创作全链/重生成修订 Remix API/设置页；硬缺口=①全站无 DELETE（rg 实证 api/contents 零 DELETE/PATCH/PUT）②发布无落地页（publish API 在、公开页无）③无重命名 ④独立播放页缺
+- 交付缺口①删除全链：content-service.deleteContent（Owner 硬删除，schema 全链 Cascade 级联 + 在途 Job 走 §0.5.9 fail-fast 兜底）；asset-service.removeIfOrphaned（内容寻址全局去重的对偶面：存储 key 引用计数清理，引用中文件不动）；DELETE /api/contents/:id（requireSessionUser + 领域错误映射）；首页卡片删除按钮 + 二次确认弹窗（明示不可逆后果）+ 乐观更新
+- 测试 tests/content-delete.test.ts 六用例（级联/文件回收/去重对偶面/403/防探测 404/404）；门禁 tsc ✓ eslint ✓ vitest 114/114；HTTP 冒烟 DELETE 404 语义正确、首页编译 200
+- 文档：m15 报告 §0.5.12（背景/盘点/交付/后续底座队列）
+
+Stage Summary:
+- 环境：容器回收后完整恢复（代码=远端 4fa97bb；运行时 product 模式；生产库全新空库——零测试作品，直接回应「花里胡哨的作品」）
+- 底座第一块落地：作品删除全链（API+服务+文件回收+UI+确认弹窗+6 测试），用户从此可清理不想要的作品
+- 底座队列（零模型 token）：②发布分享落地页 /w/:id → ③重命名 → ④独立播放页
+- 待推送：本 commit（token 本会话内仍有效，直接推）

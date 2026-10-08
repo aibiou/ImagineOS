@@ -27,6 +27,7 @@ import {
   PlugZap,
   Rocket,
   Sparkles,
+  Trash2,
   Wand2,
   X,
 } from 'lucide-react'
@@ -142,6 +143,10 @@ export default function Home() {
   const [timelineFor, setTimelineFor] = useState<ContentListItem | null>(null)
   const [timeline, setTimeline] = useState<VersionItem[] | null>(null)
   const [timelineBusy, setTimelineBusy] = useState<string | null>(null)
+
+  // 删除作品对话框（底座能力：作品管理；不可逆操作 → 显式确认）
+  const [deleteFor, setDeleteFor] = useState<ContentListItem | null>(null)
+  const [deleting, setDeleting] = useState(false)
 
   // 探索作品播放对话框（视觉内容第一：点开即看）
   const [playingItem, setPlayingItem] = useState<ExploreItem | null>(null)
@@ -292,6 +297,29 @@ export default function Home() {
     [mutateContent, toast],
   )
 
+  const confirmDelete = useCallback(
+    async () => {
+      if (!deleteFor) return
+      setDeleting(true)
+      try {
+        const res = await fetch(`/api/contents/${deleteFor.id}`, { method: 'DELETE' })
+        const json = (await res.json().catch(() => ({}))) as { message?: string }
+        if (!res.ok) {
+          toast({ title: '删除没有完成', description: json.message ?? '请稍后再试', variant: 'destructive' })
+          return
+        }
+        setMine((prev) => prev.filter((i) => i.id !== deleteFor.id))
+        toast({ title: '作品已删除', description: json.message ?? '画面、配音与任务记录一并清理。' })
+      } catch {
+        toast({ title: '网络错误', description: '请稍后再试。', variant: 'destructive' })
+      } finally {
+        setDeleting(false)
+        setDeleteFor(null)
+      }
+    },
+    [deleteFor, toast],
+  )
+
   const exploreCards = useMemo(() => explore.slice(0, 9), [explore])
 
   return (
@@ -432,6 +460,7 @@ export default function Home() {
                   busy={busyContentId === item.id}
                   onRevise={() => setRevisionFor(item)}
                   onTimeline={() => void openTimeline(item)}
+                  onDelete={() => setDeleteFor(item)}
                 />
               ))}
             </div>
@@ -512,6 +541,33 @@ export default function Home() {
             >
               去创作空间改这一版
               <ArrowRight className="size-4" aria-hidden />
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* 删除作品对话框（不可逆 → 显式确认 + 后果说明） */}
+      <Dialog open={deleteFor !== null} onOpenChange={(open) => !open && setDeleteFor(null)}>
+        <DialogContent className="border-white/10 bg-zinc-900 sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Trash2 className="size-4 text-red-400" aria-hidden />
+              删除这个作品？
+              {deleteFor && <span className="truncate text-sm font-normal text-zinc-400">《{deleteFor.title}》</span>}
+            </DialogTitle>
+            <DialogDescription>
+              删除后无法找回：画面、配音、版本历史与任务记录会一并清理。公开过的话，探索区也会同步下架。
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="ghost" onClick={() => setDeleteFor(null)} className="text-zinc-400">先留着</Button>
+            <Button
+              onClick={() => void confirmDelete()}
+              disabled={deleting}
+              className="gap-2 bg-red-600/90 text-white hover:bg-red-600"
+            >
+              {deleting ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Trash2 className="size-4" aria-hidden />}
+              {deleting ? '正在删除…' : '删除作品'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -670,11 +726,13 @@ function ContentCard({
   busy,
   onRevise,
   onTimeline,
+  onDelete,
 }: {
   item: ContentListItem
   busy: boolean
   onRevise: () => void
   onTimeline: () => void
+  onDelete: () => void
 }) {
   return (
     <Card className="group overflow-hidden border-white/10 bg-zinc-900/60 transition hover:border-fuchsia-400/25">
@@ -739,6 +797,17 @@ function ContentCard({
           className="h-9 gap-1.5 border-white/15 bg-transparent text-zinc-300 hover:border-amber-400/40 hover:text-amber-200"
         >
           <History className="size-3.5" aria-hidden /> 来路
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          onClick={onDelete}
+          aria-label={`删除 ${item.title}`}
+          title="删除这个作品"
+          disabled={busy}
+          className="h-9 w-9 shrink-0 border-white/15 bg-transparent text-zinc-500 hover:border-red-400/40 hover:text-red-300"
+        >
+          <Trash2 className="size-3.5" aria-hidden />
         </Button>
       </CardFooter>
     </Card>

@@ -1,10 +1,11 @@
 // Content 生命周期服务（§48 / §51 / §63 前段）
 // 边界纪律：本文件不 import 任何模型 SDK（ADR-0002 lint 守卫）
 import { db, SQLITE_TX_TIMEOUT } from '@/lib/db'
-import { DomainValidationError, IllegalTransitionError, NotFoundError } from '@/core/errors'
+import { DomainValidationError, IllegalTransitionError, NotFoundError, PermissionDeniedError } from '@/core/errors'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
 import { remixRepo } from '@/core/repositories/remix-repo'
+import { assetService } from '@/core/assets/asset-service'
 import { assertTransition, isCreativeStatus } from '@/core/content/state-machine'
 import type { Content } from '@/core/repositories/types'
 import type { StartCreationInput } from '@/core/content/schemas'
@@ -151,6 +152,28 @@ export const contentService = {
 
   listExplore() {
     return contentRepo.listPublic(db)
+  },
+
+  /**
+   * 删除作品（Owner 硬删除，底座能力：作品管理）
+   * - DB：schema 全链 onDelete: Cascade，一行 content.delete 级联清
+   *   版本/配方/故事/分镜/资产行/生成任务/交互/溯源/发布/Remix 血缘。
+   * - 在途任务：生成中的 Job 行同步级联；worker 侧「作品不存在」fail-fast
+   *   （gate7-product-hardening-008 NonRetryableJobError）兜底，不烧重试。
+   * - 文件：按存储 key 引用计数清理（removeIfOrphaned），单文件失败不阻断删除。
+   */
+  async deleteContent(contentId: string, actorId: string): Promise<{ id: string; title: string }> {
+    const { content, isOwner } = await this.getOwnedOrVisibleContent(contentId, actorId)
+    if (!isOwner) {
+      // 他人私有作品在可见性闸已并归 not_found；能走到这里的是公开作品 → 明确 permission_denied
+      throw new PermissionDeniedError('只有作品作者可以删除作品')
+    }
+    const keys = await db.asset.findMany({ where: { contentId }, select: { storageLocation: true } })
+    await db.content.delete({ where: { id: content.id } })
+    await Promise.all(
+      keys.map((k) => assetService.removeIfOrphaned(k.storageLocation).catch(() => null)),
+    )
+    return { id: content.id, title: content.title }
   },
 
   /** 详情聚合：作品 + 溯源尾部 + 衍生树（API 层不直触 DB） */

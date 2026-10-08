@@ -155,6 +155,18 @@ export const assetService = {
     return diskStorage.resolvePath(storageLocation)
   },
 
+  /**
+   * 引用计数安全清理：无任何 Asset 行再引用该存储 key 时才物理删除文件。
+   * 背景：存储为内容寻址（key = hash.ext）且 Asset 按 (hash, kind) 全局去重——
+   * 删作品级联掉 Asset 行后，文件可能仍被其他作品引用，凭空删除会弄坏别人的画面。
+   */
+  async removeIfOrphaned(storageLocation: string): Promise<boolean> {
+    const still = await db.asset.findFirst({ where: { storageLocation }, select: { id: true } })
+    if (still) return false
+    await diskStorage.remove(storageLocation)
+    return true
+  },
+
   /** 最近一次最终视频/封面（explore 卡片视觉源；按创建时间倒序第一件） */
   async latestFinalForContent(contentId: string): Promise<{ final: string | null; poster: string | null }> {
     const finals = await db.asset.findMany({
