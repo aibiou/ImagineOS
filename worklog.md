@@ -606,3 +606,24 @@ Stage Summary:
 - native AI 视频已入片（单镜 62-75s cogvideox-3 正片），但 zai 单通道供给约束 ~5 分钟/提交 → 每突发 1-2 镜 native、其余诚实回落合成
 - 全 native 的解锁条件（需产品负责人动作）：设置→模型服务 重录 agnes 双站点通道（密钥随旧库丢失；双站点独立额度池轮转设计正为此场景）
 - 三处健壮性修复 + 6 个回归测试锁定；环境 SIGKILL 频发已用断点续跑消化
+
+---
+Task ID: ui-e2e-014
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「你继续」——闭合核心链路验证矩阵最后缺口：新库上 UI 层（浏览器真实创作）从未走过一遍，产品负责人要自己体验作品，先用浏览器替其踩完全链
+
+Work Log:
+- 环境盘点：代码 4c9d6a3 已推送（本地 origin/main 缓存一致）；dev server 存活、worker 轮询在跑、product 模式（双 FORCE 开关空 = native-first 默认）；生产库空但 ModelProviderConfig=0 行；/tmp/my-project 旧快照 DB 连 ModelProviderConfig 表都没有（多 provider 前 schema）→ agnes 密钥确认不可恢复（实证第二来源）
+- 卫生：清理 6 个孤儿匿名用户（E2E 会话残留、contents/projects/interactions 全零）→ 平台真实零残留（0 用户/0 作品/0 资产）
+- UI E2E（agent-browser 真实浏览器，1440×900，会话 uie2e）：首页输入「我想做一个30秒的视频：清晨的海边小城，一位卖早点的阿姨推着小车慢慢出摊，热气和晨光一起醒来」→ 开始创造 → IDEA（就这样，继续）→ 3 个真实分化方向（温暖/亲切/诗意）选 A → 一句话故事+情绪弧 → 拆分镜头（3 镜头）→ 开始 AI 生成 → 生成中渐进可见（首查 2/3 镜头图已在页面长出）→ REVIEW 诚实标签 hybrid native 1/3 → 满意渲染成片 → FINISH 播放器 readyState=4 真实播放（currentTime 持续推进）→ 发布（已发布徽章+分享链接构造）→ /w/:id 分享页（标题/播放器/Remix CTA）→ 首页 UI 删除（二次确认弹窗）→ 清场
+- 取证（ui-e2e-forensics.mjs，删除前抓取）：Generation 18 行全账本——4×text.plan zai-chat 成功（2.6-5.2s）；image.shot 3 张成功（~30s/张）；video.shot 镜0 native 成功 74.4s、镜1/2 各 3 次 429 失败（60s 冷却间隔实测：08:05:14→08:06:14→08:07:14）诚实回落；audio.tts 1 次 429 退避救回后 3 连成功；Provenance 20 事件——mode.decision=native 3/3（product 模式按设计生效）、两条 video.shot.fallback 含失败原因、storyboard.done、render.done 28.8s
+- 标签之谜闭合：生成中「(2/3)」非 native 计数而是「镜全部完成」口径（镜1 于 08:07:14 回落定案时 +1）——黑盒修复语义正确非 bug
+- 修复实证（上轮三修复在真实 UI 流量下全部兑现）：429 冷却窗口重试（60s 间隔）、native 视频串行化（无并发互踩）、失败原因落账本（outputJson.error）、TTS 退避救回、渐进可见（shotAssets 秒级透出）
+- 清场：成片证据先保全（download/ui-e2e/final-film.mp4，28.8s/3.4MB/h264 720×1280/aac + 14 张全阶段截图）；UI 删除 → contents/assets/jobs/generations 全归零、storage/assets 0 文件（孤儿回收）、分享页 404；浏览器全程零页面错误零 console 错误
+- 提交：6181fa1（取证脚本入库）；download/ui-e2e 为用户可见证据目录不入库
+
+Stage Summary:
+- 核心链路验证矩阵三层闭合：代码/测试层（125 vitest）✓ + API 层 E2E（两轮全绿）✓ + UI 浏览器层 E2E（本次全绿）✓——一句话→成片→分享→删除在产品真实交互面上完整可用
+- product 模式（native-first）在 UI 真实流量下按设计工作：意图 native 3/3 → 实得 hybrid 1/3，zai 单通道 ~5 分钟/提交供给约束第三次坐实（这是供给侧事实，非代码缺陷）
+- 解锁全 native 的唯一待办仍是产品负责人动作：/settings/models 重录 agnes 双站点密钥（两处灾备源已实证无钥匙；双站独立额度池+轮转调度已就绪只欠配置）
+- 用户体验主链路的已知边界：单次突发 3 镜约 7 分钟、其中 1 镜 native AI 视频 + 2 镜诚实标注的合成回落；多通道配置后 native 占比与时延将显著改善
