@@ -11,6 +11,7 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { router, hasVideoShotProvider } from '@/ai/router/registry'
+import { createCallSerializer } from '@/ai/router/call-serializer'
 import type { ImageSize, ProviderCallContext } from '@/ai/router/types'
 import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
 import { contentRepo } from '@/core/repositories/content-repo'
@@ -79,6 +80,12 @@ const MOTION_ENV = {
   forceNative: process.env.IMAGINEOS_FORCE_NATIVE === '1',
   forceComposition: process.env.IMAGINEOS_FORCE_COMPOSITION === '1',
 }
+
+/** native 视频调用串行化（模块级：全进程一个队列）。
+ *  根因（2026-10-08 E2E 实证）：IMAGE_CONCURRENCY=2 使两镜视频并发提交，而 zai key
+ *  视频并发=1——后提交者 429，600ms 退避 3 连烧穿即回落合成（5 镜 4 亡）。串行化后
+ *  全镜视频提交排队（提交+轮询+下载全周期互斥）；图像/TTS 并发不变。 */
+const serializeVideoCall = createCallSerializer()
 
 /** 图生视频运动提示词：首帧已定画面，描述的是“这一镜怎么动起来” */
 function videoPromptFor(shot: ShotSnapshot, structure: VersionStructure): string {
@@ -175,14 +182,16 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
         shotAssets: shotAssets.slice(),
       })
       try {
-        const { result: videoResult } = await router.video(
-          {
-            prompt: videoPromptFor(shot, structure),
-            imageUrl: `data:${result.mime};base64,${result.base64}`,
-            size: '720x1280',
-            speedFirst: true,
-          },
-          { ...ctx, purpose: 'shot.video' },
+        const { result: videoResult } = await serializeVideoCall(() =>
+          router.video(
+            {
+              prompt: videoPromptFor(shot, structure),
+              imageUrl: `data:${result.mime};base64,${result.base64}`,
+              size: '720x1280',
+              speedFirst: true,
+            },
+            { ...ctx, purpose: 'shot.video' },
+          ),
         )
         const videoAsset = await assetService.save({
           contentId: content.id,

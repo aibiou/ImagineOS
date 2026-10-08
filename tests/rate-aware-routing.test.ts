@@ -4,7 +4,7 @@
 // 铁律：fake provider 注入，绝不触网。
 import { describe, it, expect, afterEach } from 'vitest'
 import { registerProvider, clearRegistry, resetRegistry, router, orderCandidates, rateCooldownSnapshot } from '@/ai/router/registry'
-import type { ImageShotProvider, ProviderCallContext } from '@/ai/router/types'
+import type { ImageShotProvider, ProviderCallContext, VideoShotProvider } from '@/ai/router/types'
 
 const ctx: ProviderCallContext = { contentId: 'test-content', versionId: null, purpose: 'test' }
 
@@ -129,5 +129,30 @@ describe('router 限速快速让位与冷却（fake provider，绝不触网）',
     const { providerId } = await router.image({ prompt: 'p', size: '768x1344' }, ctx)
     expect(providerId).toBe('b-ok')
     expect(aAttempts).toBe(3) // 非限速错误不受快速让位影响
+  }, 10_000)
+
+  it('末位候选限速重试等待按能力分级：video.shot 等满冷却窗口（非 600ms 指数退避）', async () => {
+    // 2026-10-08 E2E 缺陷回归：zai key 视频并发=1，在途任务 62–75s；600ms 退避 3 连烧穿
+    // → native 镜头无谓阵亡（5 镜 4 亡）。修复：video.shot 末位候选限速 → 等冷却窗口再重试。
+    // IMAGINEOS_RATE_COOLDOWN_MS 动态覆盖为 150ms → 尝试间隔应 ≈150ms（<600ms 证明走的是冷却分支）
+    process.env.IMAGINEOS_RATE_COOLDOWN_MS = '150'
+    clearRegistry()
+    const stamps: number[] = []
+    const solo: VideoShotProvider = {
+      id: 'solo-video-limited',
+      capability: 'video.shot',
+      model: 'fake-video',
+      async execute() {
+        stamps.push(Date.now())
+        throw new Error('API request failed with status 429: Too many requests')
+      },
+    }
+    registerProvider(solo)
+    await expect(router.video({ prompt: 'p', imageUrl: 'data:image/png;base64,xx' }, ctx)).rejects.toThrow(/video\.shot/)
+    expect(stamps).toHaveLength(3) // 末位候选完整重试（不让位——链上只有它）
+    const gap1 = stamps[1]! - stamps[0]!
+    expect(gap1).toBeGreaterThanOrEqual(140) // 确实等了（非零退避）
+    expect(gap1).toBeLessThan(500) // 等的是冷却窗口（150ms），不是 600ms 指数退避
+    delete process.env.IMAGINEOS_RATE_COOLDOWN_MS
   }, 10_000)
 })

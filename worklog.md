@@ -582,3 +582,27 @@ Stage Summary:
 - E2E 按授权执行一次并清场：平台 contents=0/assets=0/storage 0 文件
 - 测试隔离补全（DB 之外补上存储维度）；vitest 120/120、tsc/eslint ✓
 - 待推送：本 commit；底座队列剩余：③重命名 ④独立播放页
+
+---
+Task ID: gate7-core-native-013
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人方向校准「分享页只是附加功能，最重要的一句话想法→最终的AI内容结果你搞好了吗？」——核心链路针对性验证 + native 视频路径 429 根因修复
+
+Work Log:
+- 回答策略：不用口头回答，用取证回答。先盘点核心链路现状：代码完整（120 测试）、上轮 E2E 全链绿但成片为合成兜底
+- 通道探测（probe-zai-video.mjs，1 任务最小额度）：zai-video cogvideox-3 存活——data URI 首帧 74s 出片 h264 720x1280；同时发现灾备遗留：生产库 ModelProviderConfig=0 行（agnes 双站点密钥随旧库丢失）
+- 误归因纠正：上轮报告写「agnes 队列满」，实际 agnes 从未配置（0 行），真实失败者=zai-video；§0.5.13 已附归因更正
+- 根因锁定（Generation 账本时间线）：z-ai 429 限流，视频提交间隔约束 ~5 分钟级；旧退避 600ms/1200ms 在 ~2s 烧完 3 次尝试全落在限流窗口内（上轮 5 镜 4 亡）
+- 修复①call-serializer.ts（新）+ pipeline-executor 接线：native 视频调用全周期串行化（IMAGE_CONCURRENCY=2 曾使两镜视频并发互踩）
+- 修复②registry.ts runWithRetry：末位候选限速等待按能力分级——video.shot 等满冷却窗口（60s）再重试，其余能力维持指数退避
+- 修复③job-service.markRunning：fire-and-forget 改状态条件写（只许 claimed→running）——并行测试实证快速失败 Job 偶发滞留 running 竞态
+- 修复后 E2E（product 模式全链）：全绿；hybrid native 2/5；修复当场兑现证据——镜3 第1次 429→等60s→第2次成功出片 62s；成片 42.6s/6.4MB h264+aac；发布→分享 200→删除善后 404；平台零残留
+- e2e-share-driver 增设删除前取证块（Generation/Provenance/ffprobe 落盘 /tmp/e2e-core-forensics.json——级联删除会抹证据）；修复取证块两处 Prisma select 字段错误（error 字段不存在→outputJson；purpose 不存在→inputJson）
+- 门禁：tsc ✓ / eslint ✓ / vitest 125/125 两轮稳定（+4 串行化 +1 限速等待分级）
+- 文档：m15 报告 §0.5.13 归因更正 + §0.5.14 全记录
+
+Stage Summary:
+- 核心链路（一句话→成片）两轮 E2E 实证已通：表达→意图→方向→故事→分镜→生成→渲染→发布→分享→删除全链真实可用
+- native AI 视频已入片（单镜 62-75s cogvideox-3 正片），但 zai 单通道供给约束 ~5 分钟/提交 → 每突发 1-2 镜 native、其余诚实回落合成
+- 全 native 的解锁条件（需产品负责人动作）：设置→模型服务 重录 agnes 双站点通道（密钥随旧库丢失；双站点独立额度池轮转设计正为此场景）
+- 三处健壮性修复 + 6 个回归测试锁定；环境 SIGKILL 频发已用断点续跑消化

@@ -240,6 +240,12 @@ const RATE_COOLDOWN_MS = Number(process.env.IMAGINEOS_RATE_COOLDOWN_MS ?? 60_000
 const rateCooldowns = new Map<string, number>() // providerId → 冷却截止 epoch ms
 const rotationOffsets: Record<string, number> = {} // capability → 调用计数（轮转偏移取模）
 
+/** 动态读取冷却窗口（模块级 RATE_COOLDOWN_MS 常量仅供调度排序；重试等待读动态值，测试可运行时覆盖） */
+function dynamicCooldownMs(): number {
+  const env = Number(process.env.IMAGINEOS_RATE_COOLDOWN_MS)
+  return Number.isFinite(env) && env > 0 ? env : RATE_COOLDOWN_MS
+}
+
 function isRateLimited(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e)
   return /\b429\b|rate.?limit|too many requests|video_queue_full|队列满|限流/i.test(msg)
@@ -368,6 +374,14 @@ async function runWithRetry<P, R>(
         // 限速命中：记录冷却（下一次调用起排链尾）；非末位候选立即让位，不烧退避重试加重限流
         rateCooldowns.set(provider.id, Date.now() + RATE_COOLDOWN_MS)
         if (opts?.failFastOnRateLimit) break
+        // 末位候选（无候选可让位）：video.shot 等满冷却窗口再重试。
+        // 实证（2026-10-08 E2E 账本）：zai key 视频并发=1，在途任务 62–75s；600ms 指数退避
+        // 在 ~2s 内烧完 3 次尝试、全程落在限流窗口内，native 镜头无谓阵亡（5 镜 4 亡）。
+        // 其余能力维持指数退避（TTS 实证 429 窗口 <1s，600ms 即恢复）。
+        if (attempt < MAX_ATTEMPTS_PER_PROVIDER) {
+          await sleep(capability === 'video.shot' ? dynamicCooldownMs() : BASE_BACKOFF_MS * 2 ** (attempt - 1))
+          continue
+        }
       }
       if (isNonRetryable(e)) break // 确定性失败：重试无意义，立即降级到下一候选
       if (attempt < MAX_ATTEMPTS_PER_PROVIDER) {

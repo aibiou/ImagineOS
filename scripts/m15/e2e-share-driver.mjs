@@ -213,6 +213,57 @@ async function main() {
   const inExplore = (explore.json?.items ?? []).some((i) => i.id === contentId)
   log(`⑬ 探索列表${inExplore ? '已含' : '未含'}该作品`)
 
+  // ---- 11a. 核心链路取证（删除前执行——级联删除会抹掉 Generation/Provenance 证据）----
+  // 目的：回答「一句话→最终 AI 内容结果」的产物形态——每镜 native 视频成败、
+  // provider、错误串、成片形态（ffprobe）。写入 /tmp/e2e-core-forensics.json。
+  try {
+    const { PrismaClient } = await import('@prisma/client')
+    const { execFileSync } = await import('node:child_process')
+    const db = new PrismaClient()
+    const gens = await db.generation.findMany({
+      where: { contentId },
+      orderBy: { createdAt: 'asc' },
+      select: { type: true, provider: true, model: true, status: true, outputJson: true, inputJson: true, latencyMs: true, createdAt: true },
+    })
+    const provs = await db.provenance.findMany({
+      where: { contentId, OR: [{ eventType: 'ai_generated' }] },
+      orderBy: { createdAt: 'asc' },
+      select: { model: true, payloadJson: true, createdAt: true },
+    })
+    const sbJob = await db.generationJob.findFirst({
+      where: { contentId, type: 'video.storyboard', status: 'succeeded' },
+      orderBy: { completedAt: 'desc' },
+    })
+    const shotAssets = sbJob?.outputJson ? (JSON.parse(sbJob.outputJson).shotAssets ?? []) : []
+    const nativeShots = shotAssets.filter((s) => s.videoAssetId).length
+    const mode = nativeShots === 0 ? 'composition' : nativeShots === shotAssets.length ? 'native' : 'hybrid'
+    const finalRes = await fetch(`${BASE}${finalUrl}`)
+    const filmBuf = Buffer.from(await finalRes.arrayBuffer())
+    writeFileSync('/tmp/e2e-final-film.mp4', filmBuf)
+    let ffprobe = null
+    try {
+      ffprobe = JSON.parse(execFileSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration,size:stream=codec_name,width,height,r_frame_rate', '-of', 'json', '/tmp/e2e-final-film.mp4']).toString())
+    } catch (e) { ffprobe = { error: String(e?.message ?? e).slice(0, 200) } }
+    const forensics = {
+      at: new Date().toISOString(),
+      generationMode: { mode, nativeShots, totalShots: shotAssets.length },
+      videoShotLedger: gens.filter((g) => g.type === 'video.shot').map((g) => {
+        const out = g.outputJson ? (() => { try { return JSON.parse(g.outputJson) } catch { return {} } })() : {}
+        const inp = g.inputJson ? (() => { try { return JSON.parse(g.inputJson) } catch { return {} } })() : {}
+        return { at: g.createdAt.toISOString().slice(11, 23), provider: g.provider, model: g.model, status: g.status, purpose: inp.purpose ?? null, latencyMs: g.latencyMs, error: out.error ?? null }
+      }),
+      ledgerByType: gens.reduce((acc, g) => { const k = `${g.type}/${g.status}`; acc[k] = (acc[k] ?? 0) + 1; return acc }, {}),
+      nativeFallbackEvents: provs.filter((p) => p.model === 'native-fallback').map((p) => JSON.parse(p.payloadJson ?? '{}')),
+      modeDecisionEvent: provs.find((p) => p.model === 'mode-decision')?.payloadJson ?? null,
+      film: { bytes: filmBuf.length, durationSec: ffprobe?.format?.duration ?? null, streams: (ffprobe?.streams ?? []).map((s) => `${s.codec_name} ${s.width ?? ''}x${s.height ?? ''} ${s.r_frame_rate ?? ''}`.trim()) },
+    }
+    writeFileSync('/tmp/e2e-core-forensics.json', JSON.stringify(forensics, null, 1))
+    log(`⑬a 核心取证：mode=${mode}（native ${nativeShots}/${shotAssets.length} 镜）｜video.shot 记账 ${forensics.videoShotLedger.length} 条｜成片 ${forensics.film.durationSec}s/${(filmBuf.length / 1024 / 1024).toFixed(1)}MB`)
+    await db.$disconnect()
+  } catch (e) {
+    log(`⑬a 取证失败（不阻断主流程）：${String(e?.message ?? e).slice(0, 200)}`)
+  }
+
   // ---- 11. 删除收尾（E2E 顺带验证删除链 + 平台零残留）----
   persist({ step: 'cleanup' })
   const del = await api(`/api/contents/${contentId}`, { method: 'DELETE' })

@@ -178,8 +178,15 @@ export const jobService = {
   },
 
   markRunning(jobId: string): Promise<void> {
-    void db.generationJob.updateMany({ where: { id: jobId }, data: { status: 'running' } }).then(() => {})
-    return Promise.resolve()
+    // 状态条件写：只允许 claimed→running。fail-fast 已落 failed 的 Job 绝不被翻回 running
+    // （2026-10-08 并行全量测试实证该竞态：fire-and-forget 写在 SQLite BUSY 竞争下偶发
+    // 晚于 fail() 落盘 → 快速失败 Job 滞留 running 至租约过期，用户侧表现为永久转圈）
+    return db.generationJob
+      .updateMany({
+        where: { id: jobId, status: { in: ['claimed', 'running'] } },
+        data: { status: 'running' },
+      })
+      .then(() => undefined)
   },
 
   /** 进度上报（同时续租，防 lease 误回收） */
