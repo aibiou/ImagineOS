@@ -627,3 +627,24 @@ Stage Summary:
 - product 模式（native-first）在 UI 真实流量下按设计工作：意图 native 3/3 → 实得 hybrid 1/3，zai 单通道 ~5 分钟/提交供给约束第三次坐实（这是供给侧事实，非代码缺陷）
 - 解锁全 native 的唯一待办仍是产品负责人动作：/settings/models 重录 agnes 双站点密钥（两处灾备源已实证无钥匙；双站独立额度池+轮转调度已就绪只欠配置）
 - 用户体验主链路的已知边界：单次突发 3 镜约 7 分钟、其中 1 镜 native AI 视频 + 2 镜诚实标注的合成回落；多通道配置后 native 占比与时延将显著改善
+
+---
+Task ID: provider-reuse-015
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人反馈「一个模型提供商有多个模型，还要重复配置 url 和密钥——配置一次，选不同模型就行」——配置体验改造
+
+Work Log:
+- 现状取证：ModelProviderConfig 每行 = 完整连接（baseUrl+apiKey）+ 单模型；同提供商加第二个模型必须整行重填（用户正是配置 agnes-com 时踩中——生产库发现其已配置 agnes-com/llm 一行）
+- 方案裁决：连接级复用（行级数据结构不动，AI 路由/管线零改动）vs 提供商-模型两表重构——选前者：体验等价、风险最小、行级独立性保留（删任一行不影响其他行）
+- 后端（provider-config-service.create）：新增 reuseConfigId 入参——服务端从源行复制 baseUrl/apiKey/providerType（密钥不经过客户端）；label 缺省=模型名；客户端误传的连接字段一律被源覆盖（防误填/防篡改）；源不存在明确报错零写入
+- 前端（settings/models/page.tsx）：添加表单「新建连接 / 复用已有连接」模式切换（有可复用连接时出现）；复用模式=连接选择器（按 baseUrl 去重、跨通道可选——同一把钥匙常管多通道）+ 模型名 + 可选显示名，地址与密钥字段完全隐藏；「获取模型列表」复用既有 configId 通道；配置卡片新增「与其他 N 项共用连接」徽章（换密钥语义提示）；空通道引导补复用提示
+- 测试：tests/provider-reuse-connection.test.ts +5（服务端复制+打码返回/跨通道复用/误传字段被覆盖/源不存在拒绝/删源行后复用行独立存活）→ 全量 130/130
+- 门禁：tsc ✓ eslint ✓ vitest 130/130 ✓
+- 浏览器 E2E（dev server 热加载新代码后）：用户真实 agnes-com 连接上复用添加 image 通道模型 Wan2.2-T2V-A14B——零地址零密钥输入、DB 两行同连接实证（sk-Hp6…qMw2 一致）、双卡片共用徽章显示；测试行 API 精确删除（保留用户 agnes-com 原行）；浏览器零错误；截图 15-17 入 download/ui-e2e/
+- 提交：d87c32c
+
+Stage Summary:
+- 痛点闭环：同一提供商（含同一把钥匙跨通道）加模型从「重填地址+密钥」降为「选连接+填模型名」，密钥永不二次输入且不出服务器
+- 兼容性：既有配置/编辑流/测试验证/启停/删除全部原样；数据零迁移
+- 产品负责人 agnes-com 配置完好（llm 通道一行）——后续加 agnes image/video 通道时直接复用，无需再找密钥
+- 待推送：d87c32c（含 ui-e2e-014 的 6181fa1/a2c8790 共三个 commit，需新临时 token）
