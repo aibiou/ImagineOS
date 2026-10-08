@@ -1,10 +1,9 @@
-// POST /api/settings/model-providers/models —— 拉取可用模型列表（GET {baseUrl}/models，零消耗）
-// 用途：表单「获取模型列表」按钮——填好地址与密钥后一键拉取该密钥有权限的模型，免去手敲模型名。
-// 取密钥两种模式：
-//   { baseUrl, apiKey } —— 新增表单（密钥已在表单中输入）
-//   { configId }        —— 编辑表单（未改密钥时复用已存密钥；明文只在服务端出现）
+// POST /api/settings/model-providers/remote-models —— 拉取可用模型列表（GET {baseUrl}/models，零消耗）
+// 用途：表单「获取模型列表」按钮。取密钥两种模式：
+//   { providerId }        —— 已有提供商（用已存密钥；明文只在服务端出现）
+//   { baseUrl, apiKey }   —— 新建提供商表单（密钥已在表单中输入，尚未保存）
 import {
-  ModelProviderConfigSchema,
+  ModelProviderSchema,
   fetchAvailableModels,
   providerConfigService,
 } from '@/core/settings/provider-config-service'
@@ -15,14 +14,14 @@ export async function POST(req: Request) {
 
     let baseUrl: string
     let apiKey: string
-    if (typeof body.configId === 'string' && body.configId.length > 0) {
-      const row = await providerConfigService.readById(body.configId)
-      if (!row) return Response.json({ error: '配置不存在' }, { status: 404 })
-      baseUrl = row.baseUrl
-      apiKey = row.apiKey
+    if (typeof body.providerId === 'string' && body.providerId.length > 0) {
+      const provider = await providerConfigService.readProviderById(body.providerId)
+      if (!provider) return Response.json({ error: '提供商不存在' }, { status: 404 })
+      baseUrl = provider.baseUrl
+      apiKey = provider.apiKey
     } else {
-      const base = ModelProviderConfigSchema.shape.baseUrl.safeParse(body.baseUrl)
-      const key = ModelProviderConfigSchema.shape.apiKey.safeParse(body.apiKey)
+      const base = ModelProviderSchema.shape.baseUrl.safeParse(body.baseUrl)
+      const key = ModelProviderSchema.shape.apiKey.safeParse(body.apiKey)
       if (!base.success || !key.success) {
         return Response.json({ error: '接口地址或密钥不合法（地址须 http(s):// 开头，密钥至少 8 位）' }, { status: 422 })
       }

@@ -366,26 +366,44 @@ model ContentInteraction {
   @@index([contentId, type])
 }
 
-// 自定义模型服务配置（M1.5 Phase B 解锁 / ADR-0004）
-// 目标：不因单一 Provider 配额限制阻塞 ImagineOS（产品负责人 2026-10-06 指令）
-// 每行 = 一条能力通道候选；Model Router 按通道读取启用项（priority 升序）→ 内置 z-ai 兜底。
+// 模型服务配置（M1.5 Phase B 解锁 / ADR-0004；2026-10-08 提供商化重构）
+// 两级结构（产品负责人指令：按提供商配置，地址与密钥只录一次）：
+//   ModelProvider        = 提供商级连接（label + baseUrl + apiKey + 总开关 + 连接测试账）
+//   ModelProviderModel   = 该提供商下的模型（绑定能力通道 llm/image/tts/video + 优先级 + 附加参数 + 模型验证账）
+// 同一提供商（如智谱）的对话/生图/配音模型共享同一套鉴权——不再重复配置。
+// Model Router 消费 readAll() 产出的扁平行（ProviderConfigRow 形状不变），AI 层零改动。
 // Alpha 明文存密钥（单租户沙箱），API 返回一律打码；正式密钥管理留 Trust 层。
-model ModelProviderConfig {
-  id              String    @id @default(cuid())
-  channel         String // llm | image | tts | video（能力通道）
-  label           String // 显示名（如「DeepSeek 对话」）
-  providerType    String // openai-compat（OpenAI 兼容接口）
-  baseUrl         String // 如 https://api.deepseek.com/v1
-  apiKey          String // 密钥（明文存储；对外打码，掩码提交=不修改）
-  modelName       String // 如 deepseek-chat
-  extraJson       String? // 附加请求参数 JSON（size / voice / response_format 等）
-  enabled         Boolean   @default(true)
-  priority        Int       @default(100) // 数值越小越优先
-  lastTestStatus  String? // ok | fail | untested
-  lastTestMessage String?
-  lastTestedAt    DateTime?
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+model ModelProvider {
+  id               String    @id @default(cuid())
+  label            String    @unique // 显示名（如「智谱」）
+  providerType     String // openai-compat（OpenAI 兼容接口）
+  baseUrl          String // 如 https://api.deepseek.com/v1
+  apiKey           String // 密钥（明文存储；对外打码，掩码提交=不修改）
+  enabled          Boolean   @default(true) // 总开关：关=旗下所有模型退出候选链
+  lastTestStatus   String? // ok | fail | untested（连接级：GET /models 零消耗）
+  lastTestMessage  String?
+  lastTestedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
+  models ModelProviderModel[]
+}
+
+model ModelProviderModel {
+  id               String    @id @default(cuid())
+  providerId       String
+  provider         ModelProvider @relation(fields: [providerId], references: [id], onDelete: Cascade)
+  channel          String // llm | image | tts | video（能力通道）
+  modelName        String // 如 deepseek-chat
+  extraJson        String? // 附加请求参数 JSON（size / voice / response_format 等）
+  enabled          Boolean   @default(true)
+  priority         Int       @default(100) // 数值越小越优先（通道内横向比较）
+  lastTestStatus   String? // ok | fail | untested（模型级：按通道真实最小调用）
+  lastTestMessage  String?
+  lastTestedAt     DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@unique([providerId, channel, modelName])
   @@index([channel, enabled, priority])
 }

@@ -676,3 +676,27 @@ Stage Summary:
 - Generation 账本 + 失败原因落账 + 原始响应片段三层观测性在本次攻坚中互相成全
 - 待办提醒：Ling 免费窗口 2 周后转计费（¥ 未公布），到期前需重估优先级或撤下；QPS=2/s 单键，若未来 llm 并发化需轮转或多键
 - 附加地雷排除：.gitignore 裸 `test` 模式曾静默忽略 src/app/**/test/ 路由目录（新 test 路由磁盘存在但 git 不可见）——锚定为 /test、/prompt（同病同修），回归验证 check-ignore 解除
+
+---
+Task ID: provider-refactor-017
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人二次反馈「应按模型提供商分类——一个提供商下多个模型；llm/图片/视频还在分别配置提供商，同一个提供商重复配置了」——提供商化重构
+
+Work Log:
+- 现状确认：上轮「连接复用」是复制式补丁（reuseConfigId 复制 baseUrl/apiKey 到新行），每行仍各存一份连接，改密钥不联动、跨通道仍要分别走四张表单——用户指出的是结构性问题
+- 设计裁决：ModelProvider（提供商级：label+baseUrl+apiKey+总开关+连接测试账）→ ModelProviderModel（模型级：channel+modelName+priority+extraJson+验证账，@@unique([providerId, channel, modelName])）两表替换旧 ModelProviderConfig 单表；AI 层零改动的前提 = readAll() 产出与旧表完全同形的扁平行
+- 扁平语义（关键决策）：id=模型 id（冷却/轮转/链粒度不变）；label=「提供商·模型」（保证 openai-compat:{label} 的 provider.id 唯一，同提供商多模型不撞车）；enabled=模型∧提供商总开关；updatedAt=max(提供商,模型)（registry 的 configSignature 因此能感知提供商级密钥轮换）
+- 数据迁移（三段式）：extract（$queryRaw 抽旧表 2 行）→ db push（建新表删旧表）→ restore（按 providerType+baseUrl+apiKey 分组恢复；提供商名=组内 label 公共前缀）；生产库 2 行完整迁移（agnes-com/ant-ling 各 1 提供商 1 模型，优先级/测试状态保留）
+- 服务层重写：createProvider/updateProvider/removeProvider（密钥掩码哨兵；地址/密钥变更级联重置提供商连接账+旗下全部模型验证账）/addModel/updateModel/removeModel/testProviderConnection（连接级 GET /models）/verifyModel（模型级真实最小调用，join 提供商取密钥）/readAll（扁平化）
+- 路由树：GET+POST /、PATCH+DELETE /:id、POST /:id/test、POST /:id/models、PATCH+DELETE /models/:mid、POST /models/:mid/test、POST /remote-models（{providerId}|{baseUrl,apiKey} 双模式）；旧 bare /models 端点删除
+- UI 重写（提供商中心化）：通道生效链总览（保留四通道心智）+ 提供商卡片（连接信息+总开关+测试连接+内嵌模型行）+ 添加模型表单（选通道+填模型名+一键拉列表，地址密钥字段完全消失）+ 新建提供商表单（预设芯片+保存前「验证密钥」）+ 保存后自动展开添加模型表单
+- 测试重写：provider-reuse-connection.test.ts → provider-model-structure.test.ts（一次配置多通道零重复落库/扁平语义/改钥级联+签名感知/总开关/级联删除/去重约束/掩码哨兵/跨提供商链序）→ 全量 136/136；tsc ✓ eslint ✓
+- 浏览器 E2E：2 提供商卡片渲染正确、链总览「ant-ling·Ling-3.1-flash → agnes-com·agnes-3.0-flash → 内置兜底」；给 agnes-com 加 image 通道模型全程零地址零密钥（用户痛点场景实证）；「测试连接」ant-ling 77ms 通过；「验证」Ling-3.1-flash 真实对话 873ms 通过；测试模型删除清场；零 console 错误；remote-models 端点用已存密钥拉到 11 个 Ling 模型
+- 排障记录：①dev server 缓存旧 Prisma Client（不识 db.modelProvider）→ 重启解决；②「id] 畸形目录」虚惊一场——输出渲染层吞 [m 序列，字符级检查证实目录本就是 [mid]，git 索引路径正确
+- 提交+推送：本条目与全部重构代码
+
+Stage Summary:
+- 结构性痛点闭环：同一提供商（一把钥匙）管 llm/image/tts/video 四通道，URL+密钥只录一次、改一次全通道生效、总开关一键整提供商退出
+- AI 层（registry/openai-compat/provider-config 三个文件）零改动——扁平行接口是这次重构的杠杆点，链序/冷却/轮转/Generation 记账语义原样保留
+- 用户现有配置（agnes-com llm + ant-ling llm 含 Ling 免费优先级）无损迁移，主链路行为零变化
+- 迁移脚本与备份快照入 scripts/m15/（可复现）；旧表已删（schema 干净）

@@ -1,7 +1,8 @@
-// 模型服务配置领域服务（ADR-0004 / M1.5 Phase B 解锁）
-// 职责：配置 CRUD + zod 校验 + 密钥打码 + 连接测试 + 链缓存失效通知。
-// 边界：本模块只依赖 db 与纯 fetch（连接测试），不绑定任何模型 SDK（§87）。
-// AI 层（src/ai/router/provider-config）经本服务读取配置构建候选链。
+// 模型服务配置领域服务（ADR-0004 / M1.5 Phase B；2026-10-08 提供商化重构）
+// 两级结构：ModelProvider（地址+密钥一次配置）→ ModelProviderModel（模型绑定能力通道）。
+// 职责：提供商/模型 CRUD + zod 校验 + 密钥打码 + 连接测试 + 模型真实验证 + 链缓存失效通知。
+// 边界：本模块只依赖 db 与纯 fetch（测试），不绑定任何模型 SDK（§87）。
+// AI 层（src/ai/router/provider-config）经 readAll() 读扁平行构建候选链——形状与旧单表完全一致。
 
 import { z } from 'zod'
 import { db } from '@/lib/db'
@@ -14,8 +15,8 @@ export type ProviderChannel = (typeof PROVIDER_CHANNELS)[number]
 export const PROVIDER_TYPES = ['openai-compat'] as const
 export type ProviderType = (typeof PROVIDER_TYPES)[number]
 
-export const ModelProviderConfigSchema = z.object({
-  channel: z.enum(PROVIDER_CHANNELS),
+/** 提供商（连接级）输入 */
+export const ModelProviderSchema = z.object({
   label: z.string().trim().min(1).max(40),
   providerType: z.enum(PROVIDER_TYPES),
   baseUrl: z
@@ -25,6 +26,12 @@ export const ModelProviderConfigSchema = z.object({
     .max(300)
     .regex(/^https?:\/\//i, '接口地址必须以 http(s):// 开头'),
   apiKey: z.string().trim().min(8).max(400),
+  enabled: z.boolean().optional().default(true),
+})
+
+/** 模型（能力通道绑定）输入 */
+export const ModelProviderModelSchema = z.object({
+  channel: z.enum(PROVIDER_CHANNELS),
   modelName: z.string().trim().min(1).max(120),
   extraJson: z
     .string()
@@ -37,9 +44,10 @@ export const ModelProviderConfigSchema = z.object({
   priority: z.number().int().min(1).max(999).optional().default(100),
 })
 
-export type ModelProviderConfigInput = z.infer<typeof ModelProviderConfigSchema>
+export type ModelProviderInput = z.infer<typeof ModelProviderSchema>
+export type ModelProviderModelInput = z.infer<typeof ModelProviderModelSchema>
 
-/** DB 行形态（Prisma ModelProviderConfig） */
+/** 扁平行形态（AI 层消费；与旧单表 ModelProviderConfig 完全同形——registry/openai-compat 零改动） */
 export interface ProviderConfigRow {
   id: string
   channel: string
@@ -56,6 +64,35 @@ export interface ProviderConfigRow {
   lastTestedAt: Date | null
   createdAt: Date
   updatedAt: Date
+}
+
+/** DB 行形态（Prisma ModelProvider，含模型） */
+export interface ProviderRowWithModels {
+  id: string
+  label: string
+  providerType: string
+  baseUrl: string
+  apiKey: string
+  enabled: boolean
+  lastTestStatus: string | null
+  lastTestMessage: string | null
+  lastTestedAt: Date | null
+  createdAt: Date
+  updatedAt: Date
+  models: Array<{
+    id: string
+    providerId: string
+    channel: string
+    modelName: string
+    extraJson: string | null
+    enabled: boolean
+    priority: number
+    lastTestStatus: string | null
+    lastTestMessage: string | null
+    lastTestedAt: Date | null
+    createdAt: Date
+    updatedAt: Date
+  }>
 }
 
 // ---------- 掩码 ----------
@@ -90,80 +127,147 @@ function notifyChanged(): void {
   }
 }
 
+// ---------- 内部读取与打码 ----------
+
+async function loadProviders(): Promise<ProviderRowWithModels[]> {
+  return (await db.modelProvider.findMany({
+    orderBy: { createdAt: 'asc' },
+    include: { models: { orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }] } },
+  })) as ProviderRowWithModels[]
+}
+
+/** 对外形态：密钥打码 */
+function maskProvider(p: ProviderRowWithModels) {
+  return { ...p, apiKey: maskApiKey(p.apiKey), models: p.models.map((m) => ({ ...m })) }
+}
+
 // ---------- CRUD ----------
 
 export const providerConfigService = {
-  /** 全量列表（按通道分组排序；apiKey 打码） */
-  async list(): Promise<Array<Omit<ProviderConfigRow, 'apiKey'> & { apiKey: string }>> {
-    const rows = (await db.modelProviderConfig.findMany({
-      orderBy: [{ channel: 'asc' }, { priority: 'asc' }, { createdAt: 'asc' }],
-    })) as ProviderConfigRow[]
-    return rows.map((r) => ({ ...r, apiKey: maskApiKey(r.apiKey) }))
+  /** 全量列表（提供商 + 内嵌模型；apiKey 打码） */
+  async list(): Promise<Array<ProviderRowWithModels & { apiKey: string }>> {
+    const rows = await loadProviders()
+    return rows.map(maskProvider)
   },
 
-  /** 新增（校验通过才落库；成功后通知链失效）
-   *  连接复用：传 reuseConfigId 时，baseUrl/apiKey/providerType 从源配置服务端复制
-   *  （密钥不经过客户端）；label 缺省取 modelName——「配一次连接，加多个模型」。 */
-  async create(input: unknown): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; detail?: string }> {
-    let candidate: unknown = input
-    if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).reuseConfigId === 'string') {
-      const reuseId = (input as Record<string, unknown>).reuseConfigId as string
-      if (reuseId.length === 0) {
-        return { ok: false, error: '复用的源配置 id 不能为空' }
-      }
-      const source = await db.modelProviderConfig.findUnique({ where: { id: reuseId } })
-      if (!source) {
-        return { ok: false, error: '要复用的连接不存在（可能已被删除），请重新选择' }
-      }
-      const raw: Record<string, unknown> = { ...(input as Record<string, unknown>) }
-      delete raw.reuseConfigId
-      // 连接三元组以源为准；客户端传不传都覆盖（复用语义 = 连接完全一致）
-      raw.baseUrl = source.baseUrl
-      raw.apiKey = source.apiKey
-      raw.providerType = source.providerType
-      // 显示名缺省 = 模型名（加模型的最小输入就一个模型名）
-      if (typeof raw.label !== 'string' || raw.label.trim() === '') raw.label = raw.modelName
-      candidate = raw
-    }
-    const parsed = ModelProviderConfigSchema.safeParse(candidate)
+  /** 新增提供商（一次配置地址与密钥；模型随后添加） */
+  async createProvider(input: unknown): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; detail?: string }> {
+    const parsed = ModelProviderSchema.safeParse(input)
     if (!parsed.success) {
       return {
         ok: false,
-        error: '配置校验失败',
+        error: '提供商校验失败',
+        detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('；'),
+      }
+    }
+    const { enabled, ...rest } = parsed.data
+    try {
+      const row = await db.modelProvider.create({
+        data: { ...rest, enabled: enabled ?? true, lastTestStatus: 'untested' },
+        include: { models: true },
+      })
+      notifyChanged()
+      return { ok: true, item: maskProvider(row as unknown as ProviderRowWithModels) }
+    } catch (e) {
+      const code = (e as { code?: string }).code
+      const msg = e instanceof Error ? e.message : String(e)
+      if (code === 'P2002' || /unique/i.test(msg)) {
+        return { ok: false, error: '已有同名提供商——换一个显示名' }
+      }
+      return { ok: false, error: '创建失败', detail: msg }
+    }
+  },
+
+  /** 更新提供商（apiKey 传掩码 = 不修改；地址/密钥变化 → 提供商连接测试账 + 旗下全部模型验证账重置为 untested） */
+  async updateProvider(id: string, body: Record<string, unknown>): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; status: number }> {
+    const existing = await db.modelProvider.findUnique({ where: { id } })
+    if (!existing) return { ok: false, error: '提供商不存在', status: 404 }
+
+    const patch: Record<string, unknown> = {}
+    for (const key of ['label', 'baseUrl', 'apiKey'] as const) {
+      if (body[key] === undefined) continue
+      if (key === 'apiKey' && typeof body[key] === 'string' && isMaskedKey(body[key])) continue // 掩码 = 不修改
+      const v = ModelProviderSchema.shape[key].safeParse(body[key])
+      if (!v.success) return { ok: false, error: `${key} 不合法：${v.error.issues[0]?.message ?? ''}`, status: 422 }
+      patch[key] = v.data
+    }
+    if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled)
+    if (Object.keys(patch).length === 0) return { ok: false, error: '没有可更新字段', status: 422 }
+
+    // 连接三元组变化：提供商连接账重置 + 级联旗下全部模型的验证账重置（鉴权已换，旧验证结论作废）
+    const connectionChanged = patch.baseUrl !== undefined || patch.apiKey !== undefined
+    if (connectionChanged) {
+      patch.lastTestStatus = 'untested'
+      patch.lastTestMessage = null
+      patch.lastTestedAt = null
+    }
+
+    const row = await db.modelProvider.update({ where: { id }, data: patch, include: { models: true } })
+    if (connectionChanged) {
+      await db.modelProviderModel.updateMany({
+        where: { providerId: id },
+        data: { lastTestStatus: 'untested', lastTestMessage: null, lastTestedAt: null },
+      })
+    }
+    notifyChanged()
+    const fresh = connectionChanged
+      ? ((await db.modelProvider.findUnique({ where: { id }, include: { models: true } })) as unknown as ProviderRowWithModels)
+      : (row as unknown as ProviderRowWithModels)
+    return { ok: true, item: maskProvider(fresh) }
+  },
+
+  /** 删除提供商（级联删除旗下模型） */
+  async removeProvider(id: string): Promise<{ ok: boolean }> {
+    await db.modelProvider.delete({ where: { id } })
+    notifyChanged()
+    return { ok: true }
+  },
+
+  /** 为提供商添加模型（绑定能力通道；地址与密钥复用提供商，密钥不经过客户端） */
+  async addModel(providerId: string, input: unknown): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; detail?: string; status?: number }> {
+    const provider = await db.modelProvider.findUnique({ where: { id: providerId } })
+    if (!provider) return { ok: false, error: '提供商不存在', status: 404 }
+    const parsed = ModelProviderModelSchema.safeParse(input)
+    if (!parsed.success) {
+      return {
+        ok: false,
+        error: '模型校验失败',
         detail: parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('；'),
       }
     }
     const { extraJson, enabled, priority, ...rest } = parsed.data
-    const row = await db.modelProviderConfig.create({
-      data: {
-        ...rest,
-        extraJson: extraJson ?? null,
-        enabled: enabled ?? true,
-        priority: priority ?? 100,
-        lastTestStatus: 'untested',
-      },
-    })
-    notifyChanged()
-    return { ok: true, item: { ...row, apiKey: maskApiKey(row.apiKey) } }
+    try {
+      const model = await db.modelProviderModel.create({
+        data: {
+          ...rest,
+          providerId,
+          extraJson: extraJson ?? null,
+          enabled: enabled ?? true,
+          priority: priority ?? 100,
+          lastTestStatus: 'untested',
+        },
+      })
+      notifyChanged()
+      return { ok: true, item: model }
+    } catch (e) {
+      const code = (e as { code?: string }).code
+      const msg = e instanceof Error ? e.message : String(e)
+      if (code === 'P2002' || /unique/i.test(msg)) {
+        return { ok: false, error: '该模型已在同一通道下配置过（同提供商同通道同模型名去重）' }
+      }
+      return { ok: false, error: '添加失败', detail: msg }
+    }
   },
 
-  /** 更新（apiKey 传掩码 = 不修改；连接相关字段变化重置测试状态） */
-  async update(id: string, body: Record<string, unknown>): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; status: number }> {
-    const existing = await db.modelProviderConfig.findUnique({ where: { id } })
-    if (!existing) return { ok: false, error: '配置不存在', status: 404 }
+  /** 更新模型（模型名/优先级/附加参数/启停/换通道） */
+  async updateModel(modelId: string, body: Record<string, unknown>): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; status: number }> {
+    const existing = await db.modelProviderModel.findUnique({ where: { id: modelId } })
+    if (!existing) return { ok: false, error: '模型不存在', status: 404 }
 
     const patch: Record<string, unknown> = {}
-    const fields: Array<[string, 'label' | 'baseUrl' | 'apiKey' | 'modelName' | 'priority']> = [
-      ['label', 'label'],
-      ['baseUrl', 'baseUrl'],
-      ['apiKey', 'apiKey'],
-      ['modelName', 'modelName'],
-      ['priority', 'priority'],
-    ]
-    for (const [key, schemaKey] of fields) {
+    for (const key of ['channel', 'modelName', 'priority'] as const) {
       if (body[key] === undefined) continue
-      if (key === 'apiKey' && typeof body[key] === 'string' && isMaskedKey(body[key])) continue // 掩码 = 不修改
-      const v = ModelProviderConfigSchema.shape[schemaKey].safeParse(body[key])
+      const v = ModelProviderModelSchema.shape[key].safeParse(body[key])
       if (!v.success) return { ok: false, error: `${key} 不合法：${v.error.issues[0]?.message ?? ''}`, status: 422 }
       patch[key] = v.data
     }
@@ -171,7 +275,7 @@ export const providerConfigService = {
       if (body.extraJson === null || body.extraJson === '') {
         patch.extraJson = null
       } else {
-        const v = ModelProviderConfigSchema.shape.extraJson.safeParse(body.extraJson)
+        const v = ModelProviderModelSchema.shape.extraJson.safeParse(body.extraJson)
         if (!v.success) return { ok: false, error: '附加参数必须是合法 JSON', status: 422 }
         patch.extraJson = v.data
       }
@@ -179,32 +283,40 @@ export const providerConfigService = {
     if (body.enabled !== undefined) patch.enabled = Boolean(body.enabled)
 
     if (Object.keys(patch).length === 0) return { ok: false, error: '没有可更新字段', status: 422 }
-    if (patch.apiKey !== undefined || patch.baseUrl !== undefined || patch.modelName !== undefined) {
+    if (patch.modelName !== undefined || patch.channel !== undefined) {
       patch.lastTestStatus = 'untested'
       patch.lastTestMessage = null
       patch.lastTestedAt = null
     }
 
-    const row = await db.modelProviderConfig.update({ where: { id }, data: patch })
-    notifyChanged()
-    return { ok: true, item: { ...row, apiKey: maskApiKey(row.apiKey) } }
+    try {
+      const row = await db.modelProviderModel.update({ where: { id: modelId }, data: patch })
+      notifyChanged()
+      return { ok: true, item: row }
+    } catch (e) {
+      const code = (e as { code?: string }).code
+      const msg = e instanceof Error ? e.message : String(e)
+      if (code === 'P2002' || /unique/i.test(msg)) {
+        return { ok: false, error: '该模型已在同一通道下配置过', status: 422 }
+      }
+      return { ok: false, error: '更新失败', status: 500 }
+    }
   },
 
-  /** 删除 */
-  async remove(id: string): Promise<{ ok: boolean }> {
-    await db.modelProviderConfig.delete({ where: { id } })
+  /** 删除模型（提供商与连接保留） */
+  async removeModel(modelId: string): Promise<{ ok: boolean }> {
+    await db.modelProviderModel.delete({ where: { id: modelId } })
     notifyChanged()
     return { ok: true }
   },
 
-  /** 连接测试并落账（POST /api/settings/model-providers/:id/test）：
-   *  GET {baseUrl}/models 零消耗验证（密钥+地址+模型名在场）→ lastTestStatus 持久化。
-   *  返回 null = 配置不存在（路由层转 404）。 */
-  async testConnection(id: string): Promise<ConnectionTestResult | null> {
-    const row = (await db.modelProviderConfig.findUnique({ where: { id } })) as ProviderConfigRow | null
+  /** 提供商连接测试并落账（GET {baseUrl}/models 零消耗）：
+   *  返回 null = 提供商不存在（路由层转 404）。 */
+  async testProviderConnection(id: string): Promise<ConnectionTestResult | null> {
+    const row = await db.modelProvider.findUnique({ where: { id } })
     if (!row) return null
-    const result = await testOpenAiCompatConnection(row)
-    await db.modelProviderConfig.update({
+    const result = await testOpenAiCompatConnection({ baseUrl: row.baseUrl, apiKey: row.apiKey })
+    await db.modelProvider.update({
       where: { id },
       data: {
         lastTestStatus: result.ok ? 'ok' : 'failed',
@@ -215,16 +327,74 @@ export const providerConfigService = {
     return result
   },
 
-  /** 内部读取（含明文密钥；仅供 AI 层链构建——不对外暴露） */
-  async readAll(): Promise<ProviderConfigRow[]> {
-    return (await db.modelProviderConfig.findMany({
-      orderBy: [{ priority: 'asc' }, { createdAt: 'asc' }],
-    })) as ProviderConfigRow[]
+  /** 模型真实验证并落账（按通道最小真实调用；需 join 提供商取密钥）。
+   *  返回 null = 模型不存在。 */
+  async verifyModel(modelId: string): Promise<
+    | { ok: true; provider: { id: string; label: string }; result: ModelVerifyResult & { modelsCount: number } }
+    | { ok: false; error: string; status: number }
+    | null
+  > {
+    const model = await db.modelProviderModel.findUnique({ where: { id: modelId }, include: { provider: true } })
+    if (!model) return null
+    const list = await fetchAvailableModels({ baseUrl: model.provider.baseUrl, apiKey: model.provider.apiKey })
+    const verify = await verifyModelForChannel(model.channel, {
+      baseUrl: model.provider.baseUrl,
+      apiKey: model.provider.apiKey,
+      modelName: model.modelName,
+      extraJson: model.extraJson,
+    }, list.ok ? list.models : [])
+    const message = `模型「${model.modelName}」${verify.ok ? '验证通过' : '验证失败'}：${verify.detail}`
+    await db.modelProviderModel.update({
+      where: { id: modelId },
+      data: {
+        lastTestStatus: verify.ok ? 'ok' : 'fail',
+        lastTestMessage: message.slice(0, 500),
+        lastTestedAt: new Date(),
+      },
+    })
+    return {
+      ok: true,
+      provider: { id: model.provider.id, label: model.provider.label },
+      result: { ...verify, modelsCount: list.ok ? list.models.length : 0, detail: message },
+    }
   },
 
-  /** 按 id 内部读取（含明文密钥；供「拉取模型列表」路由复用已存密钥） */
-  async readById(id: string): Promise<ProviderConfigRow | null> {
-    return (await db.modelProviderConfig.findUnique({ where: { id } })) as ProviderConfigRow | null
+  /** 内部读取（含明文密钥；仅供 AI 层链构建——不对外暴露）。
+   *  扁平行 = 提供商 join 模型；形状与旧单表 ModelProviderConfig 完全一致：
+   *  - id = 模型 id（链构建/冷却/轮转的粒度）
+   *  - label = 「提供商·模型」（保证 openai-compat:{label} 的 provider.id 唯一）
+   *  - enabled = 模型启停 AND 提供商总开关
+   *  - updatedAt = max(提供商, 模型)（configSignature 能感知密钥变更——密钥在提供商行上） */
+  async readAll(): Promise<ProviderConfigRow[]> {
+    const providers = await loadProviders()
+    const rows: ProviderConfigRow[] = []
+    for (const p of providers) {
+      for (const m of p.models) {
+        rows.push({
+          id: m.id,
+          channel: m.channel,
+          label: `${p.label}·${m.modelName}`,
+          providerType: p.providerType,
+          baseUrl: p.baseUrl,
+          apiKey: p.apiKey,
+          modelName: m.modelName,
+          extraJson: m.extraJson,
+          enabled: m.enabled && p.enabled,
+          priority: m.priority,
+          lastTestStatus: m.lastTestStatus,
+          lastTestMessage: m.lastTestMessage,
+          lastTestedAt: m.lastTestedAt,
+          createdAt: m.createdAt,
+          updatedAt: p.updatedAt > m.updatedAt ? p.updatedAt : m.updatedAt,
+        })
+      }
+    }
+    return rows
+  },
+
+  /** 按 id 内部读取提供商（含明文密钥；供「拉取模型列表」路由复用已存密钥） */
+  async readProviderById(id: string): Promise<ProviderRowWithModels | null> {
+    return (await db.modelProvider.findUnique({ where: { id }, include: { models: true } })) as ProviderRowWithModels | null
   },
 }
 
@@ -243,12 +413,10 @@ export function joinUrl(base: string, path: string): string {
 
 /**
  * OpenAI 兼容连接测试：GET {baseUrl}/models（标准端点，零消耗）。
- * 若模型名不在列表中仅提示（部分服务商不返回全量模型表）。
  */
 export async function testOpenAiCompatConnection(row: {
   baseUrl: string
   apiKey: string
-  modelName: string
 }): Promise<ConnectionTestResult> {
   const startedAt = Date.now()
   const url = joinUrl(row.baseUrl, '/models')
@@ -269,17 +437,15 @@ export async function testOpenAiCompatConnection(row: {
       }
       return { ok: false, message: `HTTP ${res.status}：${bodyText || '无返回内容'}`, latencyMs }
     }
-    let modelHint = ''
+    let countHint = ''
     try {
       const data = (await res.json()) as { data?: Array<{ id?: string }> }
       const ids = Array.isArray(data?.data) ? data.data.map((m) => m?.id).filter(Boolean) : []
-      if (ids.length > 0 && !ids.includes(row.modelName)) {
-        modelHint = `；注意：模型列表（${ids.length} 个）中未见「${row.modelName}」，请确认名称`
-      }
+      if (ids.length > 0) countHint = `，服务返回 ${ids.length} 个模型`
     } catch {
       /* /models 返回非 JSON 不影响判定 */
     }
-    return { ok: true, message: `连接成功（${latencyMs}ms${modelHint}）`, latencyMs }
+    return { ok: true, message: `连接成功（${latencyMs}ms${countHint}）`, latencyMs }
   } catch (e) {
     const latencyMs = Date.now() - startedAt
     const msg = e instanceof Error ? e.message : String(e)
@@ -492,42 +658,6 @@ export async function verifyModelForChannel(
     return { ok: true, detail: `连接可用；模型列表（${modelsFromList.length} 个）中未见该模型，请确认名称——视频生成成本高跳过实调`, latencyMs: Date.now() - startedAt }
   }
   return { ok: true, detail: '该服务未返回模型列表；视频生成成本高跳过实调，真实可用性以首个创作任务为准', latencyMs: Date.now() - startedAt }
-}
-
-/** 执行连接测试 + 模型真实验证并落库测试结果 */
-export async function runConnectionTest(id: string): Promise<
-  { ok: true; result: ConnectionTestResult & { modelVerified: boolean; modelsCount: number } } | { ok: false; error: string; status: number }
-> {
-  const row = await db.modelProviderConfig.findUnique({ where: { id } })
-  if (!row) return { ok: false, error: '配置不存在', status: 404 }
-
-  let ok: boolean
-  let message: string
-  let modelVerified = false
-  let modelsCount = 0
-
-  const list = await fetchAvailableModels({ baseUrl: row.baseUrl, apiKey: row.apiKey })
-  if (!list.ok) {
-    ok = false
-    message = `连接失败：${list.message}`
-  } else {
-    modelsCount = list.models.length
-    const verify = await verifyModelForChannel(row.channel, row, list.models)
-    ok = verify.ok
-    modelVerified = verify.ok
-    const listNote = list.models.length > 0 ? `（服务返回 ${list.models.length} 个模型）` : ''
-    message = `连接成功${listNote}｜模型「${row.modelName}」${verify.ok ? '验证通过' : '验证失败'}：${verify.detail}`
-  }
-
-  await db.modelProviderConfig.update({
-    where: { id },
-    data: {
-      lastTestStatus: ok ? 'ok' : 'fail',
-      lastTestMessage: message.slice(0, 500),
-      lastTestedAt: new Date(),
-    },
-  })
-  return { ok: true, result: { ok, message, latencyMs: list.latencyMs, modelVerified, modelsCount } }
 }
 
 // ---------- 附加参数解析 ----------

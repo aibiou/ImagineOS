@@ -1,0 +1,34 @@
+[
+  {
+    "id": "cmuz9zhb0008gpr5ouqvwjof6",
+    "channel": "llm",
+    "label": "agnes-com",
+    "providerType": "openai-compat",
+    "baseUrl": "https://apihub.agnes-ai.com/v1",
+    "apiKey": "sk-Hp62wP4gWNyfPvuBbIiMhsuEgIq64N9y3lNffgzJo2ngqMw2",
+    "modelName": "agnes-3.0-flash",
+    "extraJson": null,
+    "enabled": true,
+    "priority": 10,
+    "lastTestStatus": "ok",
+    "lastTestMessage": "连接成功（77ms）",
+    "lastTestedAt": "2026-10-08T09:02:23.537Z",
+    "createdAt": "2026-10-08T08:29:28.284Z"
+  },
+  {
+    "id": "cmuzb5o55008ipr5oclg33xpz",
+    "channel": "llm",
+    "label": "ant-ling",
+    "providerType": "openai-compat",
+    "baseUrl": "https://api.ant-ling.com/v1",
+    "apiKey": "sk-studio-8428cf55ea9443c2b1ca1997edaab76e",
+    "modelName": "Ling-3.1-flash",
+    "extraJson": null,
+    "enabled": true,
+    "priority": 5,
+    "lastTestStatus": "ok",
+    "lastTestMessage": "连接成功（167ms）",
+    "lastTestedAt": "2026-10-08T10:07:58.067Z",
+    "createdAt": "2026-10-08T09:02:16.697Z"
+  }
+]
