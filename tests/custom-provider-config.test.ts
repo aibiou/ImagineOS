@@ -133,6 +133,35 @@ describe('OpenAI 兼容适配器（mock fetch，不触网）', () => {
     await expect(provider.execute({ system: 's', user: 'u' }, ctx)).rejects.toThrow(/401|invalid api key/)
   })
 
+  it('LLM：JSON 体 + text/plain 头（蚂蚁 Ling 实测形态）→ 二进制分支回收解析成功', async () => {
+    // 回归：Ling /chat/completions 返回 content-type: text/plain 但 body 是合法 JSON
+    // （2026-10-08 管线 12 连败根因——修复前走二进制分支 json:null → 解析必败）
+    globalThis.fetch = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          choices: [{ message: { content: '{"ok":1}', role: 'assistant' } }],
+          usage: { prompt_tokens: 7, completion_tokens: 3, total_tokens: 10 },
+        }),
+        { status: 200, headers: { 'content-type': 'text/plain;charset=UTF-8' } },
+      )) as unknown as typeof fetch
+    const provider = buildProviderFromConfig(makeRow({ channel: 'llm', label: 'ant-ling' }))
+    if (!provider || provider.capability !== 'text.plan') throw new Error('应构建 LLM provider')
+    const result = await provider.execute({ system: 's', user: 'u' }, ctx)
+    expect(result.text).toBe('{"ok":1}')
+    expect(result.usage?.totalTokens).toBe(10)
+  })
+
+  it('LLM：真非 JSON 体 → 报错附原始响应片段（网关形态差异可观测）', async () => {
+    globalThis.fetch = vi.fn(async () =>
+      new Response('<html>gateway error</html>', {
+        status: 200,
+        headers: { 'content-type': 'text/html' },
+      })) as unknown as typeof fetch
+    const provider = buildProviderFromConfig(makeRow({ channel: 'llm', label: '怪网关' }))
+    if (!provider || provider.capability !== 'text.plan') throw new Error('应构建 LLM provider')
+    await expect(provider.execute({ system: 's', user: 'u' }, ctx)).rejects.toThrow(/响应解析失败.*原始响应/)
+  })
+
   it('图像：解析 OpenAI b64_json 形态；size 默认取 payload', async () => {
     const spy = vi.fn(async () =>
       new Response(JSON.stringify({ data: [{ b64_json: Buffer.from('fake-png').toString('base64').padEnd(120, 'x') }] }), {

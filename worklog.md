@@ -648,3 +648,31 @@ Stage Summary:
 - 兼容性：既有配置/编辑流/测试验证/启停/删除全部原样；数据零迁移
 - 产品负责人 agnes-com 配置完好（llm 通道一行）——后续加 agnes image/video 通道时直接复用，无需再找密钥
 - 待推送：d87c32c（含 ui-e2e-014 的 6181fa1/a2c8790 共三个 commit，需新临时 token）
+
+---
+
+Task ID: ling-integration-016
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人提供蚂蚁 Ling 新模型线索（developer.ant-ling.com，Ling-3.1-flash 限时免费 2 周）+ 临时 key——验证连通性并接入；附带推送积压 commit（新临时 token）
+
+Work Log:
+- 推送积压：6 个 commit（ui-e2e-014 取证脚本/worklog/截图 + provider-reuse-015 功能/worklog/截图）经新临时 token 推送至 origin/main（4c9d6a3..4c15657）
+- 文档调研（agent-browser 渲染 SPA 文档站）：定价页确认 Ling-3.1-flash 全免费（输入/输出/缓存 ¥0.00，2 周）；快速开始页拿到 base URL https://api.ant-ling.com/v1（OpenAI 兼容 + Bearer）；调用限制页 QPS=2/s、同步超时 90s（推荐流式）
+- 直连验证三连：chat/completions 正常（带 reasoning_content 的推理模型，content 独立字段不干扰解析）/ GET /models 返回 11 模型且 Ling-3.1-flash 在列 / 模拟 storyboard JSON prompt 输出直接可解析零围栏
+- 顺手修复断链 bug：UI「测试验证」按钮调用的 POST /api/settings/model-providers/:id/test 路由从未存在（service 有 testOpenAiCompatConnection 但无人接线，agnes 行 lastTestStatus 一直 untested）——补 service.testConnection（读行→GET /models 零消耗测试→落账）+ 新建路由文件
+- 接入：POST /api/settings/model-providers 创建 ant-ling 行（openai-compat / https://api.ant-ling.com/v1 / Ling-3.1-flash / llm / 密钥打码落库）；测试端点双行全通（ant-ling 156ms 无模型警告 / agnes 77ms）
+- 管线 E2E 首跑发现 ling 12 连败（intent/directions/story/storyboard 全军覆没，agnes 兜底接管）——错误「choices[0].message.content 缺失」
+- 诊断攻坚：空 content 假设被直连复现推翻（story/intent 真实 prompt 直连 4/4 成功）→ 在 adapter 解析失败处加原始响应片段诊断 → 强制 ling 上场（临时停 agnes）抓到「原始响应：null」→ 真相：Ling 的 /chat/completions 返回 content-type: text/plain（body 是合法 JSON），adapter 按头分类型走了二进制分支 json:null → 解析必败；此前所有直连测试用 res.json() 不看头 → 完美盲区；/models 测试端点也不看头 → 连接测试同样测不出
+- 修复（src/ai/providers/openai-compat.ts makeLlmProvider）：二进制分支回收——json 为 null 且 bytes 以 {/[ 开头时按 UTF-8 JSON 解析；解析失败错误附原始响应片段（本次立功的观测性增强保留）
+- 测试：custom-provider-config.test.ts +2（text/plain+JSON 体回收成功 / 真非 JSON 体报错含原始响应）→ 全量 132/132；typecheck ✓ eslint ✓
+- 调度裁决：管线 LLM 为串行调用，轮转不增吞吐 → ling 提至 priority 5（agnes 10 之前），免费窗口期全量优先、agnes 活兜底、zai 最后防线；dev 模式轮转偏移态在各 route 模块图独立的观察记入认知（生产单模块图不受影响，orderCandidates 纯函数已有单测）
+- 终验：ling 独挑全管线 4/4 全绿（intent 12.7s/directions 18.7s/story 18.5s/storyboard 32.2s，Zod 校验全过阶段正常推进）；双行启用下 UI 显示调用顺序「1. ant-ling → 2. agnes-com → 内置兜底」；浏览器点「测试验证」按钮实测 ✓ 连接成功（189ms）——404 断链闭环；console 零错误；截图 18-19 入 download/ui-e2e/
+- 清场：全部 E2E 测试内容已删（DELETE 200 ×5 轮）；ant-ling/agnes-com 两行生产配置保留；诊断脚本三件入 scripts/m15/
+
+Stage Summary:
+- Ling-3.1-flash（蚂蚁百灵）正式接入：免费窗口期 llm 通道第一优先，真实管线全绿实证
+- 深挖出一个跨服务商通用坑：OpenAI 兼容不等于 content-type 兼容（text/plain 返回 JSON 体），adapter 已兼容 + 回归测试锁定
+- 测试验证按钮断链（service 有函数、UI 有调用、路由不存在）补齐闭环
+- Generation 账本 + 失败原因落账 + 原始响应片段三层观测性在本次攻坚中互相成全
+- 待办提醒：Ling 免费窗口 2 周后转计费（¥ 未公布），到期前需重估优先级或撤下；QPS=2/s 单键，若未来 llm 并发化需轮转或多键
+- 附加地雷排除：.gitignore 裸 `test` 模式曾静默忽略 src/app/**/test/ 路由目录（新 test 路由磁盘存在但 git 不可见）——锚定为 /test、/prompt（同病同修），回归验证 check-ignore 解除

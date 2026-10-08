@@ -197,6 +197,24 @@ export const providerConfigService = {
     return { ok: true }
   },
 
+  /** 连接测试并落账（POST /api/settings/model-providers/:id/test）：
+   *  GET {baseUrl}/models 零消耗验证（密钥+地址+模型名在场）→ lastTestStatus 持久化。
+   *  返回 null = 配置不存在（路由层转 404）。 */
+  async testConnection(id: string): Promise<ConnectionTestResult | null> {
+    const row = (await db.modelProviderConfig.findUnique({ where: { id } })) as ProviderConfigRow | null
+    if (!row) return null
+    const result = await testOpenAiCompatConnection(row)
+    await db.modelProviderConfig.update({
+      where: { id },
+      data: {
+        lastTestStatus: result.ok ? 'ok' : 'failed',
+        lastTestMessage: result.message,
+        lastTestedAt: new Date(),
+      },
+    })
+    return result
+  },
+
   /** 内部读取（含明文密钥；仅供 AI 层链构建——不对外暴露） */
   async readAll(): Promise<ProviderConfigRow[]> {
     return (await db.modelProviderConfig.findMany({

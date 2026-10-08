@@ -46,8 +46,10 @@ local-*
 *.log
 dev.log
 dev.out.log
-test
-prompt
+# 顶层草稿目录（锚定根路径——裸名会误伤 src/app/**/test 等同名路由目录，
+# 实证：[id]/test/route.ts 曾被静默忽略）
+/test
+/prompt
 
 server.log
 # Skills directory

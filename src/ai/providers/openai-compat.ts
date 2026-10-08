@@ -170,10 +170,19 @@ function makeLlmProvider(row: ProviderConfigRow): TextPlanProvider {
       }
       const out = await request('POST', joinUrl(row.baseUrl, '/chat/completions'), row.apiKey, body, 90_000)
       if (!out.ok) throw new Error(`[自定义LLM ${row.label}] ${out.error ?? extractJsonError(out.json) ?? '请求失败'}`)
+      // 兼容「JSON 体 + 非 JSON 头」的服务商（蚂蚁 Ling 实测：chat/completions 返回
+      // content-type: text/plain，但 body 是合法 JSON）——二进制分支回收为文本再尝试解析。
+      let json: unknown = out.json
+      if (json === null && out.bytes && out.bytes.length > 0) {
+        const text = out.bytes.toString('utf-8').trim()
+        if (text.startsWith('{') || text.startsWith('[')) {
+          try { json = JSON.parse(text) } catch { /* 保持 null，走下方统一报错 */ }
+        }
+      }
       try {
-        const text = extractContent(out.json)
+        const text = extractContent(json)
         if (!text.trim()) throw new Error('返回空内容')
-        const usage = (out.json as { usage?: Record<string, number> })?.usage
+        const usage = (json as { usage?: Record<string, number> } | null)?.usage
         return {
           text,
           usage: usage
@@ -185,7 +194,16 @@ function makeLlmProvider(row: ProviderConfigRow): TextPlanProvider {
             : undefined,
         }
       } catch (e) {
-        throw new Error(`[自定义LLM ${row.label}] 响应解析失败：${e instanceof Error ? e.message : String(e)}`)
+        // 解析失败时附带原始响应片段——定位网关形态差异（如 content:null / choices 缺失 / 错误体 200）
+        const rawSnippet =
+          json !== null
+            ? JSON.stringify(json)?.slice(0, 400)
+            : out.bytes
+              ? `text:${out.bytes.toString('utf-8').slice(0, 400)}`
+              : '(空响应)'
+        throw new Error(
+          `[自定义LLM ${row.label}] 响应解析失败：${e instanceof Error ? e.message : String(e)}｜原始响应：${rawSnippet}`,
+        )
       }
     },
   }
