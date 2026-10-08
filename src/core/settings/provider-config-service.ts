@@ -101,9 +101,31 @@ export const providerConfigService = {
     return rows.map((r) => ({ ...r, apiKey: maskApiKey(r.apiKey) }))
   },
 
-  /** 新增（校验通过才落库；成功后通知链失效） */
+  /** 新增（校验通过才落库；成功后通知链失效）
+   *  连接复用：传 reuseConfigId 时，baseUrl/apiKey/providerType 从源配置服务端复制
+   *  （密钥不经过客户端）；label 缺省取 modelName——「配一次连接，加多个模型」。 */
   async create(input: unknown): Promise<{ ok: true; item: Record<string, unknown> } | { ok: false; error: string; detail?: string }> {
-    const parsed = ModelProviderConfigSchema.safeParse(input)
+    let candidate: unknown = input
+    if (input && typeof input === 'object' && typeof (input as Record<string, unknown>).reuseConfigId === 'string') {
+      const reuseId = (input as Record<string, unknown>).reuseConfigId as string
+      if (reuseId.length === 0) {
+        return { ok: false, error: '复用的源配置 id 不能为空' }
+      }
+      const source = await db.modelProviderConfig.findUnique({ where: { id: reuseId } })
+      if (!source) {
+        return { ok: false, error: '要复用的连接不存在（可能已被删除），请重新选择' }
+      }
+      const raw: Record<string, unknown> = { ...(input as Record<string, unknown>) }
+      delete raw.reuseConfigId
+      // 连接三元组以源为准；客户端传不传都覆盖（复用语义 = 连接完全一致）
+      raw.baseUrl = source.baseUrl
+      raw.apiKey = source.apiKey
+      raw.providerType = source.providerType
+      // 显示名缺省 = 模型名（加模型的最小输入就一个模型名）
+      if (typeof raw.label !== 'string' || raw.label.trim() === '') raw.label = raw.modelName
+      candidate = raw
+    }
+    const parsed = ModelProviderConfigSchema.safeParse(candidate)
     if (!parsed.success) {
       return {
         ok: false,

@@ -145,6 +145,7 @@ function ProviderForm({
   mode,
   channelKey,
   presets,
+  allRows,
   initial,
   onSaved,
   onCancel,
@@ -152,6 +153,7 @@ function ProviderForm({
   mode: 'add' | 'edit'
   channelKey: string
   presets: readonly { label: string; baseUrl: string; modelName: string }[]
+  allRows: ConfigRow[]
   initial?: ConfigRow
   onSaved: () => void
   onCancel: () => void
@@ -176,22 +178,35 @@ function ProviderForm({
   const [fetchingModels, setFetchingModels] = useState(false)
   const [fetchMsg, setFetchMsg] = useState<string | null>(null)
 
+  // 复用已有连接（仅 add 模式）：按 baseUrl 去重跨通道展开——「配一次连接，加多个模型」。
+  // 同一服务商（如 OpenAI）的同一把钥匙往往管多个通道/多个模型，全部免重复输入。
+  const connections = useMemo(() => {
+    const map = new Map<string, ConfigRow>()
+    for (const r of allRows) if (!map.has(r.baseUrl)) map.set(r.baseUrl, r)
+    return [...map.values()]
+  }, [allRows])
+  const [reuseId, setReuseId] = useState('')
+  const reusing = !editing && connections.length > 0 && reuseId !== ''
+  const reuseSource = reusing ? (connections.find((c) => c.id === reuseId) ?? null) : null
+
   const grouped = useMemo(
     () => (modelList ? sortModelsForChannel(channelKey, modelList) : { recommended: [], others: [] }),
     [modelList, channelKey],
   )
 
-  /** 新增模式：密钥已在表单；编辑模式未改密钥：复用已存密钥（configId） */
-  const canFetchModels = form.baseUrl.trim().length > 0 && (editing || form.apiKey.trim().length > 0)
+  /** 复用模式：密钥在服务端；编辑模式未改密钥：复用已存密钥（configId）；新连接：密钥在表单 */
+  const canFetchModels = reusing || (form.baseUrl.trim().length > 0 && (editing || form.apiKey.trim().length > 0))
 
   const fetchModels = async () => {
     setFetchingModels(true)
     setFetchMsg(null)
     try {
       const payload: Record<string, unknown> =
-        editing && !form.apiKey.trim()
-          ? { configId: initial?.id }
-          : { baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() }
+        reusing
+          ? { configId: reuseId }
+          : editing && !form.apiKey.trim()
+            ? { configId: initial?.id }
+            : { baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() }
       const res = await fetch('/api/settings/model-providers/models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -227,19 +242,30 @@ function ProviderForm({
     setError(null)
     try {
       const payload: Record<string, unknown> = {
-        label: form.label.trim(),
-        baseUrl: form.baseUrl.trim(),
+        // 复用模式下显示名缺省 = 模型名（加模型最小输入就一个模型名；服务端同样兑底）
+        label: form.label.trim() || (reusing ? form.modelName.trim() : ''),
         modelName: form.modelName.trim(),
         priority: Number(form.priority) || 100,
         extraJson: form.extraJson.trim() || null,
       }
-      if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim()
+      if (reusing) {
+        payload.reuseConfigId = reuseId // 地址/密钥/协议由服务端从源配置复制，密钥不出服务器
+      } else {
+        payload.baseUrl = form.baseUrl.trim()
+        if (form.apiKey.trim()) payload.apiKey = form.apiKey.trim()
+      }
       const res = await fetch(
         editing ? `/api/settings/model-providers/${initial?.id}` : '/api/settings/model-providers',
         {
           method: editing ? 'PATCH' : 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(editing ? payload : { ...payload, channel: channelKey, providerType: 'openai-compat', apiKey: form.apiKey.trim() }),
+          body: JSON.stringify(
+            editing
+              ? payload
+              : reusing
+                ? { ...payload, channel: channelKey }
+                : { ...payload, channel: channelKey, providerType: 'openai-compat', apiKey: form.apiKey.trim() },
+          ),
         },
       )
       const data = await res.json()
@@ -252,30 +278,87 @@ function ProviderForm({
     }
   }
 
-  const requiredOk = form.label.trim() && form.baseUrl.trim() && form.modelName.trim() && (editing || form.apiKey.trim())
+  const requiredOk = reusing
+    ? form.modelName.trim().length > 0
+    : Boolean(form.label.trim() && form.baseUrl.trim() && form.modelName.trim() && (editing || form.apiKey.trim()))
 
   return (
     <div className={`space-y-3 rounded-xl border p-4 ${editing ? 'border-violet-500/25 bg-zinc-900/80' : 'border-violet-500/25 bg-zinc-900/80'}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-zinc-100">{editing ? '编辑服务' : '添加自定义服务'}</span>
-        <span className="text-xs text-zinc-400">{editing ? '修改后保存即生效（密钥留空 = 保持不变）' : '选一个服务商可自动填充地址与模型名'}</span>
+        <span className="text-sm font-medium text-zinc-100">{editing ? '编辑服务' : reusing ? '添加模型（复用连接）' : '添加自定义服务'}</span>
+        <span className="text-xs text-zinc-400">
+          {editing
+            ? '修改后保存即生效（密钥留空 = 保持不变）'
+            : reusing
+              ? '地址与密钥复用所选连接——只需选一个模型'
+              : connections.length > 0
+                ? '新服务商从预填开始；已有服务商加模型点「复用已有连接」'
+                : '选一个服务商可自动填充地址与模型名'}
+        </span>
       </div>
-      <div className="flex flex-wrap gap-2">
-        {presets.map((p) => (
+      {/* add 模式且已有可复用连接：新建 / 复用 二选一 */}
+      {!editing && connections.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
           <button
-            key={p.label}
             type="button"
-            onClick={() => applyPreset(p)}
-            className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300 transition hover:border-violet-400/40 hover:text-white"
+            onClick={() => setReuseId('')}
+            className={`rounded-full border px-3 py-1 text-xs transition ${reuseId === '' ? 'border-violet-400/60 bg-violet-500/15 text-violet-200' : 'border-white/10 bg-white/5 text-zinc-300 hover:border-violet-400/40 hover:text-white'}`}
           >
-            {p.label}
+            新建连接
           </button>
-        ))}
-      </div>
+          <button
+            type="button"
+            onClick={() => setReuseId(connections[0]?.id ?? '')}
+            className={`rounded-full border px-3 py-1 text-xs transition ${reuseId !== '' ? 'border-violet-400/60 bg-violet-500/15 text-violet-200' : 'border-white/10 bg-white/5 text-zinc-300 hover:border-violet-400/40 hover:text-white'}`}
+          >
+            复用已有连接（免重复填地址与密钥）
+          </button>
+        </div>
+      ) : null}
+      {/* 复用模式：选择连接（按地址去重，跨通道可选——同一把钥匙常常管多个通道） */}
+      {reusing ? (
+        <div className="space-y-1.5">
+          <Label htmlFor={`reuse-${channelKey}`}>复用哪个连接</Label>
+          <div className="relative">
+            <select
+              id={`reuse-${channelKey}`}
+              value={reuseId}
+              onChange={(e) => setReuseId(e.target.value)}
+              className={`${SELECT_CLS} appearance-none pr-8`}
+              aria-label="选择要复用的连接"
+            >
+              {connections.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.label} · {c.baseUrl} · {c.apiKey}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-zinc-400" aria-hidden />
+          </div>
+          {reuseSource ? (
+            <p className="text-[11px] text-zinc-400">
+              接口地址与密钥复用「{reuseSource.label}」（{reuseSource.baseUrl}，密钥 {reuseSource.apiKey}）；换密钥去源配置里改，这里不用重填。
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <div className="flex flex-wrap gap-2">
+          {presets.map((p) => (
+            <button
+              key={p.label}
+              type="button"
+              onClick={() => applyPreset(p)}
+              className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs text-zinc-300 transition hover:border-violet-400/40 hover:text-white"
+            >
+              {p.label}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="space-y-1.5">
-          <Label htmlFor={`label-${mode}-${channelKey}`}>显示名</Label>
-          <Input id={`label-${mode}-${channelKey}`} className={INPUT_CLS} value={form.label} placeholder="如：DeepSeek 对话" onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
+          <Label htmlFor={`label-${mode}-${channelKey}`}>显示名{reusing ? '（留空 = 用模型名）' : ''}</Label>
+          <Input id={`label-${mode}-${channelKey}`} className={INPUT_CLS} value={form.label} placeholder={reusing ? `如：${form.modelName || 'deepseek-reasoner'}` : '如：DeepSeek 对话'} onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
         </div>
         <div className="space-y-1.5">
           <div className="flex items-center justify-between gap-2">
@@ -323,24 +406,28 @@ function ProviderForm({
             <p className={`text-[11px] ${fetchMsg.startsWith('✓') ? 'text-emerald-300/90' : 'text-red-300/90'}`}>{fetchMsg}</p>
           ) : null}
         </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor={`base-${mode}-${channelKey}`}>接口地址（Endpoint）</Label>
-          <Input id={`base-${mode}-${channelKey}`} className={INPUT_CLS} value={form.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))} />
-        </div>
-        <div className="space-y-1.5 sm:col-span-2">
-          <Label htmlFor={`key-${mode}-${channelKey}`}>密钥（API Key）</Label>
-          <Input
-            id={`key-${mode}-${channelKey}`}
-            className={INPUT_CLS}
-            type="password"
-            value={form.apiKey}
-            placeholder={editing ? '留空 = 保持原密钥不变；输入新值则覆盖' : '仅保存在本机沙箱数据库，页面显示时打码'}
-            onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
-          />
-          {editing && initial?.apiKey ? (
-            <p className="text-[11px] text-zinc-400">当前密钥：<span className="font-mono text-zinc-300">{initial.apiKey}</span>（前3后4，中间打码）</p>
-          ) : null}
-        </div>
+        {!reusing ? (
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor={`base-${mode}-${channelKey}`}>接口地址（Endpoint）</Label>
+            <Input id={`base-${mode}-${channelKey}`} className={INPUT_CLS} value={form.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))} />
+          </div>
+        ) : null}
+        {!reusing ? (
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor={`key-${mode}-${channelKey}`}>密钥（API Key）</Label>
+            <Input
+              id={`key-${mode}-${channelKey}`}
+              className={INPUT_CLS}
+              type="password"
+              value={form.apiKey}
+              placeholder={editing ? '留空 = 保持原密钥不变；输入新值则覆盖' : '仅保存在本机沙箱数据库，页面显示时打码'}
+              onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
+            />
+            {editing && initial?.apiKey ? (
+              <p className="text-[11px] text-zinc-400">当前密钥：<span className="font-mono text-zinc-300">{initial.apiKey}</span>（前3后4，中间打码）</p>
+            ) : null}
+          </div>
+        ) : null}
         <div className="space-y-1.5">
           <Label htmlFor={`prio-${mode}-${channelKey}`}>优先级（数字越小越先用）</Label>
           <Input id={`prio-${mode}-${channelKey}`} className={INPUT_CLS} type="number" min={1} max={999} value={form.priority} onChange={(e) => setForm((f) => ({ ...f, priority: e.target.value }))} />
@@ -366,6 +453,7 @@ function ProviderForm({
 
 function ConfigCard({
   row,
+  sharedCount,
   onToggle,
   onTest,
   onDelete,
@@ -374,6 +462,7 @@ function ConfigCard({
   testResult,
 }: {
   row: ConfigRow
+  sharedCount?: number
   onToggle: (row: ConfigRow) => void
   onTest: (row: ConfigRow) => void
   onDelete: (row: ConfigRow) => void
@@ -389,6 +478,7 @@ function ConfigCard({
         mode="edit"
         channelKey={row.channel}
         presets={CHANNELS.find((c) => c.key === row.channel)?.presets ?? []}
+        allRows={[]}
         initial={row}
         onSaved={() => { setEditing(false); onSaved() }}
         onCancel={() => setEditing(false)}
@@ -402,6 +492,11 @@ function ConfigCard({
         <span className="font-medium text-zinc-100">{row.label}</span>
         <Badge variant="outline" className="text-[11px] text-zinc-400">{row.providerType}</Badge>
         <TestBadge row={row} />
+        {(sharedCount ?? 1) > 1 ? (
+          <Badge variant="outline" className="border-sky-500/30 bg-sky-500/10 text-[11px] text-sky-300 hover:bg-sky-500/10" title="同一服务商的多个模型共用同一地址与密钥——换密钥改任意一项后其余项需分别更新">
+            与其他 {(sharedCount ?? 1) - 1} 项共用连接
+          </Badge>
+        ) : null}
         {row.enabled ? (
           <Badge className="bg-violet-500/15 text-violet-300 border-violet-500/30 hover:bg-violet-500/15">候选中 · 第 {row.priority} 顺位</Badge>
         ) : (
@@ -453,13 +548,13 @@ function ConfigCard({
 
 // ---------- 添加表单（包装统一 ProviderForm） ----------
 
-function AddForm({ channelKey, presets, onSaved }: { channelKey: string; presets: readonly { label: string; baseUrl: string; modelName: string }[]; onSaved: () => void }) {
+function AddForm({ channelKey, presets, allRows, onSaved }: { channelKey: string; presets: readonly { label: string; baseUrl: string; modelName: string }[]; allRows: ConfigRow[]; onSaved: () => void }) {
   const [open, setOpen] = useState(false)
   if (!open) {
     return (
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         <Plus className="size-4" />
-        添加自定义服务
+        {allRows.length > 0 ? '添加模型 / 服务' : '添加自定义服务'}
       </Button>
     )
   }
@@ -468,6 +563,7 @@ function AddForm({ channelKey, presets, onSaved }: { channelKey: string; presets
       mode="add"
       channelKey={channelKey}
       presets={presets}
+      allRows={allRows}
       onSaved={() => { setOpen(false); onSaved() }}
       onCancel={() => setOpen(false)}
     />
@@ -529,6 +625,13 @@ export default function ModelSettingsPage() {
 
   const configuredCount = useMemo(() => items.length, [items])
 
+  // 按接口地址统计共用连接的项数（「配一次连接，加多个模型」的可见反馈）
+  const sharedByBaseUrl = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const r of items) m.set(r.baseUrl, (m.get(r.baseUrl) ?? 0) + 1)
+    return m
+  }, [items])
+
   return (
     <main className="dark min-h-screen bg-zinc-950 text-zinc-100">
       <header className="sticky top-0 z-40 border-b border-white/5 bg-zinc-950/80 backdrop-blur-xl">
@@ -557,7 +660,7 @@ export default function ModelSettingsPage() {
           <div className="mt-4 grid gap-2 text-xs text-zinc-300 sm:grid-cols-3">
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">1</span>
-              <span>选服务商预填地址 → 粘贴 API Key → 点「获取模型列表」从可用模型中选择</span>
+              <span>选服务商预填地址 → 粘贴 API Key → 点「获取模型列表」从可用模型中选择；同一服务商加更多模型时用「复用已有连接」，地址密钥不重填</span>
             </div>
             <div className="flex items-start gap-2 rounded-lg border border-white/5 bg-white/[0.03] px-3 py-2">
               <span className="flex size-5 shrink-0 items-center justify-center rounded-full bg-violet-500/20 text-[11px] font-semibold text-violet-300">2</span>
@@ -599,12 +702,14 @@ export default function ModelSettingsPage() {
                   {rows.length === 0 ? (
                     <div className="rounded-lg border border-dashed border-white/15 px-4 py-6 text-center text-xs text-zinc-400">
                       这条通道还没有自定义服务——点击下方按钮，把你的 API Key 填进来即可接管；不配置则继续使用内置服务。
+                      {items.length > 0 ? <span className="block pt-1 text-zinc-500">已配置过其他通道？添加时可选「复用已有连接」，地址密钥都不用重填。</span> : null}
                     </div>
                   ) : (
                     rows.map((row) => (
                       <ConfigCard
                         key={row.id}
                         row={row}
+                        sharedCount={sharedByBaseUrl.get(row.baseUrl)}
                         onToggle={toggle}
                         onTest={test}
                         onDelete={remove}
@@ -614,7 +719,7 @@ export default function ModelSettingsPage() {
                       />
                     ))
                   )}
-                  <AddForm channelKey={ch.key} presets={ch.presets} onSaved={load} />
+                  <AddForm channelKey={ch.key} presets={ch.presets} allRows={items} onSaved={load} />
                 </CardContent>
               </Card>
             )
