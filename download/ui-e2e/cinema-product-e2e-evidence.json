@@ -1,0 +1,174 @@
+{
+  "verifiedAt": "2026-10-09T05:01:52.159Z",
+  "task": "产品级升级 E2E（多画幅 16:9 全管线 + 修订定位器 lookBook 语义 + 画幅守卫 + 差异账本）",
+  "expression": "横屏做一个深夜修表铺的短片：老修表匠每晚留一盏灯，等一个再也没回来的客人",
+  "contentId": "cmv0gis0t0003prc598vjqoxb",
+  "intent": {
+    "aspectRatio": "16:9",
+    "aspectSource": "user",
+    "topic": "深夜修表铺留灯等客",
+    "via": "db-recovered"
+  },
+  "story": {
+    "logline": "老匠人每晚留一盏灯，等三年前修表的客人；天亮才懂，灯是留给自己的。",
+    "lookBook": "Warm amber lamplight against cold blue night, realistic cinematic style, shallow depth of field, fine 35mm film grain, soft focus highlights, quiet intimate framing, macro detail on hands",
+    "shotCount": 0,
+    "scenes": [
+      {
+        "index": 0,
+        "location": "修表铺",
+        "locationAnchor": "Tiny watch repair shop, cluttered wooden counter, magnifying lamps, drawer of watch parts, single warm bulb, cold blue night beyond the window",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 1,
+        "location": "修表铺",
+        "locationAnchor": "Tiny watch repair shop, cluttered wooden counter, magnifying lamps, drawer of watch parts, single warm bulb, cold blue night beyond the window",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 2,
+        "location": "修表铺",
+        "locationAnchor": "Tiny watch repair shop, cluttered wooden counter, magnifying lamps, drawer of watch parts, single warm bulb, cold blue night beyond the window",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 3,
+        "location": "修表铺",
+        "locationAnchor": "Tiny watch repair shop, cluttered wooden counter, magnifying lamps, drawer of watch parts, single warm bulb, cold blue night beyond the window",
+        "timeOfDay": "午夜"
+      },
+      {
+        "index": 4,
+        "location": "街角",
+        "locationAnchor": "Quiet pre-dawn street, shuttered storefronts, wet pavement reflecting distant neon, faint mist, the shop's warm window still glowing",
+        "timeOfDay": "清晨"
+      }
+    ]
+  },
+  "storyboard": {
+    "shotCount": 5,
+    "sizeProgression": [
+      "closeup",
+      "wide",
+      "closeup",
+      "wide",
+      "extreme_wide"
+    ]
+  },
+  "verify": {
+    "sealedAspectRatio": "16:9",
+    "lookBookSealed": "Warm amber lamplight against cold blue night, realistic cinematic style, shallow depth of field, fine 35mm film grain, soft focus highlights, quiet intimate framing, macro detail on hands",
+    "imageSizes": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "videoSizes": [
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null
+    ],
+    "ffprobeStreams": [
+      {
+        "codec_type": "video",
+        "codec_name": "h264",
+        "width": 1280,
+        "height": 720
+      },
+      {
+        "codec_type": "audio",
+        "codec_name": "aac",
+        "sample_rate": "44100"
+      }
+    ],
+    "durationSec": 42.6,
+    "frameFiles": [
+      "wide-shot1.jpg",
+      "wide-shot2.jpg",
+      "wide-shot3.jpg"
+    ],
+    "generationLedger": {
+      "totalCalls": 32,
+      "byType": {
+        "text.plan": 5,
+        "image.shot": 5,
+        "video.shot": 16,
+        "audio.tts": 6
+      },
+      "byProvider": {
+        "text.plan@openai-compat:ant-ling·Ling-3.1-flash": 5,
+        "image.shot@openai-compat:agnes-com·agnes-image-2.5-flash": 5,
+        "video.shot@openai-compat:agnes-com·agnes-video-2.5-flash": 5,
+        "video.shot@zai-video": 11,
+        "audio.tts@zai-tts": 6
+      }
+    },
+    "shotImageDimensions": "1312x736"
+  },
+  "revisionPlan": {
+    "feedback": "色调再暖一点，全片整体往暖琥珀调走",
+    "plan": {
+      "targetLevel": "style",
+      "summary": "把全片视觉圣经调成浓郁暖琥珀金色调，画面整体往暖琥珀方向走",
+      "reason": "「色调再暖一点，全片整体往暖琥珀调走」指向全片视觉基调，只改 story.lookBook 一处，执行层会自动注入每一镜，无需逐镜改写",
+      "affectedShotIndexes": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ],
+      "changeKind": "tone"
+    },
+    "lookBookBefore": "Warm amber lamplight against cold blue night, realistic cinematic style, shallow depth of field, fine 35mm film grain, soft focus highlights, quiet intimate framing, macro detail on hands",
+    "lookBookAfter": "Rich warm amber glow, golden lamplight bathing every frame, honeyed highlights, soft warm shadows, realistic cinematic style, shallow depth of field, fine 35mm film grain, soft focus, quiet intimate framing, macro detail on hands",
+    "lookBookChanged": true,
+    "promptsUntouched": true,
+    "shotCount": 5,
+    "structureCarriesAspect": "16:9"
+  },
+  "revisionApply": {
+    "newVersionId": "cmv0hf8pi005jprc5htipkbmy",
+    "newVersionNumber": 2,
+    "droppedAspectOnSubmit": true,
+    "guardedAspect": "16:9",
+    "diffEvent": {
+      "stage": "revision.applied",
+      "changedLayers": {
+        "lookBook": 1
+      },
+      "changedPaths": [
+        "story.lookBook"
+      ],
+      "changedCount": 1
+    }
+  },
+  "final": {
+    "url": "/api/assets/cmv0hei6u0059prc5bn9e2yqm",
+    "durationMs": 42600
+  },
+  "review": {
+    "status": "REVIEW",
+    "generationMode": {
+      "mode": "hybrid",
+      "nativeShots": 2,
+      "totalShots": 5
+    }
+  }
+}

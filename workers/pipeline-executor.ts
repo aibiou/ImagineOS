@@ -21,6 +21,7 @@ import { contentService } from '@/core/content/content-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core/content/schemas'
 import { imagePromptFor, videoPromptFor } from '@/core/content/shot-prompt'
+import { aspectRatioOf, imageSizeForAspect, renderDimensionsForAspect, videoSizeForAspect } from '@/core/content/aspect'
 import { motionModeFor, storyboardModeDecision } from '@/core/content/storyboard-mode'
 import { composeVideo, cleanupWorkDir } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
@@ -65,9 +66,9 @@ function allShots(structure: VersionStructure): ShotSnapshot[] {
   return (structure.story?.scenes ?? []).flatMap((s) => s.shots)
 }
 
-/** 画幅映射：9:16 竖屏（默认）——Intent.format 未来可扩展画幅维度 */
-function imageSizeFor(_structure: VersionStructure): ImageSize {
-  return '768x1344'
+/** 画幅映射：配方密封的 aspectRatio（缺省 9:16 竖屏向后兼容）→ 图像生成尺寸（多画幅支持） */
+function imageSizeFor(structure: VersionStructure): ImageSize {
+  return imageSizeForAspect(aspectRatioOf(structure))
 }
 
 /** 运动环境开关（ADR-0001 Rev.3：产品默认 native-first；双开关均为运维/评估逃生阀） */
@@ -108,6 +109,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   const shots = allShots(structure)
   if (shots.length === 0) throw new NonRetryableJobError('配方中没有镜头（先完成分镜）')
   const size = imageSizeFor(structure)
+  const videoSize = videoSizeForAspect(aspectRatioOf(structure))
 
   // ---- 路由决策日志（审计 R3）：意图口径；实际产物以 computeGenerationMode（shotAssets）为准，
   // 两者差异 = 回落证据（native-fallback 事件逐镜头补充原因）
@@ -168,7 +170,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
             {
               prompt: videoPromptFor(shot, structure),
               imageUrl: `data:${result.mime};base64,${result.base64}`,
-              size: '720x1280',
+              size: videoSize,
               speedFirst: true,
             },
             { ...ctx, purpose: 'shot.video' },
@@ -320,6 +322,8 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
 
   const videoPath = join(workDir, 'out-final.mp4')
   const posterPath = join(workDir, 'out-poster.jpg')
+  // 画幅感知渲染尺寸（配方 aspectRatio；缺省 9:16 向后兼容）——图像/视频/字幕/资产宽高同源
+  const { width: renderW, height: renderH } = renderDimensionsForAspect(aspectRatioOf(structure))
 
   await jobService.reportProgress(jobId, { stage: 'composing', label: '正在合成你的视频…', progress: 0.3 })
 
@@ -334,8 +338,8 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
       narrationPath: s.narrationPath,
       narrationLine: s.narrationLine,
     })),
-    width: 720,
-    height: 1280,
+    width: renderW,
+    height: renderH,
     fps: 25,
     transitionMs: 600,
     narrationLeadMs: 350,
@@ -362,8 +366,8 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
     data: videoBuf,
     declaredMime: 'video/mp4',
     durationMs: composeResult.durationMs,
-    width: 720,
-    height: 1280,
+    width: renderW,
+    height: renderH,
   })
   const posterAsset = await assetService.save({
     contentId: content.id,
@@ -382,7 +386,7 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
     actorType: 'ai',
     provider: 'pipeline',
     model: 'composite-render',
-    payload: { stage: 'render.done', durationMs: composeResult.durationMs, finalAssetId: finalAsset.id },
+    payload: { stage: 'render.done', durationMs: composeResult.durationMs, finalAssetId: finalAsset.id, aspectRatio: aspectRatioOf(structure), resolution: `${renderW}x${renderH}` },
   })
   await jobService.complete(jobId, {
     stage: 'done',

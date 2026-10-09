@@ -1,0 +1,17 @@
+{
+  "checks": {
+    "intentAspectRecognized": true,
+    "sealedAspectRatio": true,
+    "finalVideo1280x720": true,
+    "finalHasAudio": true,
+    "revisionTargetStyle": true,
+    "revisionLookBookChanged": true,
+    "revisionPromptsUntouched": true,
+    "aspectGuardHeld": true,
+    "diffLedgerWritten": true,
+    "shotImageWide169": true
+  },
+  "passCount": 10,
+  "total": 10,
+  "note": "分镜图像 1312x736：agnes 1K 档对请求尺寸 1344x768 的供给侧归一（16:9 比例保持）；渲染层精确输出 1280x720（权威断言 finalVideo1280x720）"
+}

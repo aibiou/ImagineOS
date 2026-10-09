@@ -52,6 +52,8 @@ export default async function WatchPage({ params }: { params: Promise<{ id: stri
   )
   const modeDesc = view.generationMode ? GENERATION_MODE_DESC[view.generationMode.mode] : undefined
   const remixAllowed = content.remixPermission === 'allow'
+  // 多画幅：横屏作品宽版式 + 16:9 播放器；竖屏保持原版式（多画幅支持）
+  const wide = view.aspectRatio === '16:9'
 
   return (
     <div className="dark min-h-screen flex flex-col bg-zinc-950 text-zinc-100 selection:bg-fuchsia-500/30">
@@ -84,9 +86,9 @@ export default async function WatchPage({ params }: { params: Promise<{ id: stri
           </div>
         )}
 
-        <div className="grid items-start gap-8 sm:grid-cols-[minmax(0,320px)_1fr]">
-          {/* 播放器：视觉内容第一（9:16 竖屏作品） */}
-          <div className="mx-auto w-full max-w-[320px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl shadow-black/40">
+        <div className={wide ? 'grid items-start gap-8 sm:grid-cols-[minmax(0,560px)_1fr]' : 'grid items-start gap-8 sm:grid-cols-[minmax(0,320px)_1fr]'}>
+          {/* 播放器：视觉内容第一（画幅随成片自适应） */}
+          <div className={wide ? 'mx-auto w-full max-w-[560px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl shadow-black/40' : 'mx-auto w-full max-w-[320px] overflow-hidden rounded-2xl border border-white/10 bg-black shadow-2xl shadow-black/40'}>
             {view.videoUrl ? (
               <video
                 controls
@@ -94,12 +96,12 @@ export default async function WatchPage({ params }: { params: Promise<{ id: stri
                 preload="metadata"
                 poster={view.posterUrl ?? undefined}
                 src={view.videoUrl}
-                className="aspect-[9/16] w-full object-contain"
+                className={wide ? 'aspect-[16/9] w-full object-contain' : 'aspect-[9/16] w-full object-contain'}
               />
             ) : view.posterUrl ? (
-              <img src={view.posterUrl} alt={title} className="aspect-[9/16] w-full object-cover" />
+              <img src={view.posterUrl} alt={title} className={wide ? 'aspect-[16/9] w-full object-cover' : 'aspect-[9/16] w-full object-cover'} />
             ) : (
-              <div className="flex aspect-[9/16] w-full flex-col items-center justify-center gap-3 text-zinc-600">
+              <div className={wide ? 'flex aspect-[16/9] w-full flex-col items-center justify-center gap-3 text-zinc-600' : 'flex aspect-[9/16] w-full flex-col items-center justify-center gap-3 text-zinc-600'}>
                 <Sparkles className="size-8" aria-hidden />
                 <p className="px-6 text-center text-sm">作品画面准备中</p>
               </div>

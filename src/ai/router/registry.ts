@@ -319,11 +319,16 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ])
 }
 
-/** 账本输入摘要：提取 payload.prompt（截断 4000 字）——世界一致性注入是否真的发生在调用时刻的直接证据 */
+/** 账本输入摘要：提取 payload.prompt（截断 4000 字）+ payload.size（画幅尺寸声明）——
+ *  世界一致性注入与画幅声明是否真的发生在调用时刻的直接证据 */
 function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined {
   if (typeof payload === 'object' && payload !== null && 'prompt' in payload) {
+    const summary: Record<string, unknown> = {}
     const v = (payload as { prompt?: unknown }).prompt
-    if (typeof v === 'string' && v.length > 0) return { prompt: v.length > 4000 ? `${v.slice(0, 4000)}…` : v }
+    if (typeof v === 'string' && v.length > 0) summary.prompt = v.length > 4000 ? `${v.slice(0, 4000)}…` : v
+    const s = (payload as { size?: unknown }).size
+    if (typeof s === 'string' && s.length > 0) summary.size = s
+    return Object.keys(summary).length > 0 ? summary : undefined
   }
   return undefined
 }

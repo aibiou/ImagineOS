@@ -12,6 +12,7 @@ import { contentService } from '@/core/content/content-service'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { assetService } from '@/core/assets/asset-service'
 import { jobService } from '@/core/jobs/job-service'
+import { aspectFromDimensions } from '@/core/content/aspect'
 
 /** findByIdWithDetail 的返回形状（含 owner/currentVersion/remixOf/_count） */
 type ContentDetail = NonNullable<Awaited<ReturnType<typeof contentRepo.findByIdWithDetail>>>
@@ -31,6 +32,8 @@ export interface ShareView {
   videoUrl: string | null
   posterUrl: string | null
   durationMs: number | null
+  /** 展示面画幅（成片宽高推断；多画幅支持——播放器与版式自适应） */
+  aspectRatio: '9:16' | '16:9'
   generationMode: { mode: string; nativeShots: number; totalShots: number } | null
 }
 
@@ -62,6 +65,7 @@ export async function getShareView(contentId: string, viewerId: string | null): 
     videoUrl: v?.finalAssetId ? `/api/assets/${v.finalAssetId}` : null,
     posterUrl: v?.posterAssetId ? `/api/assets/${v.posterAssetId}` : null,
     durationMs: v?.durationMs ?? null,
+    aspectRatio: aspectFromDimensions(v?.width, v?.height),
     generationMode: m,
   }
 }

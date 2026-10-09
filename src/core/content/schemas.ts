@@ -9,6 +9,11 @@ export const INTENT_FIELD_SOURCE_VALUES = ['user', 'ai_default'] as const
 export const IntentFieldSource = z.enum(INTENT_FIELD_SOURCE_VALUES)
 export type IntentFieldSource = z.infer<typeof IntentFieldSource>
 
+/** 画幅：9:16 竖屏（手机全屏，默认）| 16:9 横屏（电脑/大屏）——多画幅支持（产品级） */
+export const ASPECT_RATIOS = ['9:16', '16:9'] as const
+export type AspectRatio = (typeof ASPECT_RATIOS)[number]
+export const AspectRatioSchema = z.enum(ASPECT_RATIOS)
+
 /** 字段名 → 来源（不变量 I5：哪些是用户明确指定、哪些是 AI 默认） */
 export const IntentSourcesSchema = z.record(z.string(), IntentFieldSource)
 
@@ -20,6 +25,8 @@ export const IntentFieldsSchema = z.object({
   audience: z.string().optional(),
   tone: z.string().optional(),
   format: z.string().optional(), // short_film | vlog | documentary | ...
+  /** 画幅：竖屏 9:16（默认）| 横屏 16:9——驱动图像/视频/渲染全链尺寸 */
+  aspectRatio: AspectRatioSchema.optional(),
   duration: z.number().positive().optional(), // 秒
   visual_style: z.string().optional(),
   narration: z.boolean().optional(),
@@ -144,6 +151,8 @@ export type CreativeDirection = z.infer<typeof CreativeDirectionSchema>
  */
 export const VersionStructureSchema = z.object({
   intentSummary: z.string().optional(),
+  /** 画幅（随配方密封；缺省 9:16 向后兼容）——管线四点（图像/视频/渲染/资产）的唯一画幅来源 */
+  aspectRatio: AspectRatioSchema.optional(),
   concept: z
     .object({
       directionId: z.string().optional(),

@@ -16,6 +16,17 @@ import {
 } from '@/core/content/schemas'
 import { z } from 'zod'
 
+/** 意图行 → 画幅（fieldsJson 防御性解析；脏数据回落 9:16） */
+function aspectOfIntentRow(row: { fieldsJson: string | null } | null): '9:16' | '16:9' | undefined {
+  if (!row?.fieldsJson) return undefined
+  try {
+    const fields = (JSON.parse(row.fieldsJson) as { fields?: { aspectRatio?: unknown } }).fields
+    return fields?.aspectRatio === '16:9' ? '16:9' : fields?.aspectRatio === '9:16' ? '9:16' : undefined
+  } catch {
+    return undefined
+  }
+}
+
 const DirectionsPayloadSchema = z.object({
   directions: z.array(CreativeDirectionSchema).min(2).max(4),
 })
@@ -202,6 +213,8 @@ export const planService = {
       // 人物小传（欲望/障碍/弧光/视觉锚点）随配方密封——执行层注入 imagePrompt 的原料
       characters: workingStory?.characters ?? currentStructure?.characters ?? [],
       intentSummary: intentRow?.rawExpression ? intentRow.rawExpression.slice(0, 120) : currentStructure?.intentSummary,
+      // 画幅随配方密封（意图层权威值优先；旧版本无此字段时意图值兜底；均无 → 缺省由管线默认 9:16）
+      aspectRatio: aspectOfIntentRow(intentRow) ?? currentStructure?.aspectRatio,
     }
     return structure
   },

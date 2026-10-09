@@ -55,6 +55,8 @@ interface ContentListItem {
   posterUrl: string | null
   videoUrl: string | null
   durationMs: number | null
+  /** 展示面画幅（成片宽高推断；多画幅——播放弹窗自适应） */
+  aspectRatio?: '9:16' | '16:9'
   generationMode: { mode: string; nativeShots: number; totalShots: number } | null
   currentVersion: { id: string; versionNumber: number; changelog: string | null; createdAt: string } | null
   _count: { versions: number; remixSources: number }
@@ -656,10 +658,10 @@ export default function Home() {
                   playsInline
                   poster={playingItem.posterUrl ?? undefined}
                   src={playingItem.videoUrl}
-                  className="aspect-[9/16] max-h-[62vh] w-full bg-black object-contain"
+                  className={playingItem.aspectRatio === '16:9' ? 'aspect-[16/9] max-h-[62vh] w-full bg-black object-contain' : 'aspect-[9/16] max-h-[62vh] w-full bg-black object-contain'}
                 />
               ) : (
-                <div className="flex aspect-[9/16] max-h-[62vh] items-center justify-center bg-zinc-950">
+                <div className={playingItem.aspectRatio === '16:9' ? 'flex aspect-[16/9] max-h-[62vh] items-center justify-center bg-zinc-950' : 'flex aspect-[9/16] max-h-[62vh] items-center justify-center bg-zinc-950'}>
                   <Loader2 className="size-8 animate-spin text-zinc-600" aria-hidden />
                 </div>
               )}

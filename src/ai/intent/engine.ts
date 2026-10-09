@@ -12,6 +12,7 @@ import {
   IntentRecordSchema,
   type IntentRecord,
 } from '@/core/content/schemas'
+import { aspectFromExpression } from '@/core/content/aspect'
 import { z } from 'zod'
 
 // ---------- 抽取结果 ----------
@@ -43,7 +44,8 @@ const INTENT_SYSTEM = `你是 ImagineOS 的意图理解引擎。用户会说一�
 4. duration 单位是秒（数字）。45 秒视频 → 45。
 5. emotion 是情绪词数组（中文），如 ["温暖", "怀旧"]。
 6. characters 数组：用户提到的人物（含"我""父亲"等），name 用用户原词，description 一句话。
-7. 若有关键信息缺失（时长/观众/情绪基调/用途），在 questions 里提出最多 3 个简短自然的问题（面向普通人，不使用任何专业术语）。信息充足时 questions 为空数组。`
+7. 若有关键信息缺失（时长/观众/情绪基调/用途），在 questions 里提出最多 3 个简短自然的问题（面向普通人，不使用任何专业术语）。信息充足时 questions 为空数组。
+8. aspectRatio 画幅：用户提到「横屏/横版/宽屏」（或明确说 16:9）→ "16:9"；「竖屏/竖版」（或 9:16）→ "9:16"；未提及 → 默认 "9:16"（标 ai_default）。`
 
 const INTENT_JSON_HINT = `{
   "fields": {
@@ -53,6 +55,7 @@ const INTENT_JSON_HINT = `{
     "audience": "string? 给谁看",
     "tone": "string? 语气基调",
     "format": "short_film | vlog | documentary | explainer | ...",
+    "aspectRatio": "9:16 | 16:9（横屏/竖屏；未提及默认 9:16）",
     "duration": 45,
     "visual_style": "cinematic_realism | watercolor | anime | retro_film | ...",
     "narration": true,
@@ -89,6 +92,7 @@ function heuristicIntent(rawExpression: string): IntentRecord {
     audience: '通用观众',
     tone: '真诚自然',
     format: 'short_film',
+    aspectRatio: aspectFromExpression(cleaned) ?? '9:16',
     duration,
     visual_style: 'cinematic_realism',
     narration: true,
@@ -98,7 +102,12 @@ function heuristicIntent(rawExpression: string): IntentRecord {
     constraints: [],
   }
   const sources: Record<string, 'user' | 'ai_default'> = {}
-  for (const key of Object.keys(fields)) sources[key] = key === 'topic' || key === 'duration' && secMatch ? 'user' : 'ai_default'
+  for (const key of Object.keys(fields)) {
+    sources[key] =
+      key === 'topic' || (key === 'duration' && secMatch) || (key === 'aspectRatio' && aspectFromExpression(cleaned))
+        ? 'user'
+        : 'ai_default'
+  }
 
   return IntentRecordSchema.parse({
     fields,

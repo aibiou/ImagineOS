@@ -9,7 +9,16 @@ import { jobService } from '@/core/jobs/job-service'
 
 function withVisuals(
   items: Array<Record<string, unknown> & { id: string; currentVersionId: string | null }>,
-  visuals: Map<string, { finalAssetId: string | null; posterAssetId: string | null; durationMs: number | null }>,
+  visuals: Map<
+    string,
+    {
+      finalAssetId: string | null
+      posterAssetId: string | null
+      durationMs: number | null
+      width: number | null
+      height: number | null
+    }
+  >,
   modes: Map<string, { mode: string; nativeShots: number; totalShots: number } | null>,
 ) {
   return items.map((item) => {
@@ -20,6 +29,8 @@ function withVisuals(
       posterUrl: v?.posterAssetId ? `/api/assets/${v.posterAssetId}` : null,
       videoUrl: v?.finalAssetId ? `/api/assets/${v.finalAssetId}` : null,
       durationMs: v?.durationMs ?? null,
+      // 展示面画幅（成片宽高推断；未知按 9:16）——播放弹窗自适应用
+      aspectRatio: v?.width != null && v?.height != null && v.width > v.height ? '16:9' : '9:16',
       generationMode: m
         ? { mode: m.mode, nativeShots: m.nativeShots, totalShots: m.totalShots }
         : null,

@@ -1,15 +1,19 @@
 // POST /api/contents/:id/intent —— Intent Engine 编译（E3 主链第一环）
-// body: { answers?: string[]（访谈答案）, confirm?: boolean }
+// body: { answers?: string[]（访谈答案）, confirm?: boolean, aspectRatio?: '9:16'|'16:9'（画幅直改，零 LLM） }
 // 行为：抽取/合并 → 持久化 → 有澄清问题且未确认 → 返回问题（停留 IDEA）；确认 → IDEA→INTENT
+// 画幅直改：仅携带 aspectRatio（无 answers/confirm）时走轻量补丁——改 IntentRecord.fields/sources 后直接持久化，
+// 不触发 LLM（IdeaStage 画幅切换钮；来源标 user——用户明确指定）。
 import { requireSessionUser, domainErrorToResponse, readJson } from '../../../_lib/session'
 import { intentService } from '@/core/intent/intent-service'
 import { contentService } from '@/core/content/content-service'
 import { extractIntent } from '@/ai/intent/engine'
+import { AspectRatioSchema } from '@/core/content/schemas'
 import { z } from 'zod'
 
 const BodySchema = z.object({
   answers: z.array(z.string().trim().max(500)).max(3).optional(),
   confirm: z.boolean().optional(),
+  aspectRatio: AspectRatioSchema.optional(),
 })
 
 export async function POST(req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -40,10 +44,52 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       asked = []
     }
 
+    // ---- 画幅直改通道（零 LLM）：仅 aspectRatio、无 answers/confirm ----
+    const aspectOnly =
+      parsed.data.aspectRatio != null && !parsed.data.confirm && !(parsed.data.answers?.length)
+    if (aspectOnly) {
+      const record = intentRow ? intentService.parseRecord(intentRow) : null
+      if (!record) {
+        return Response.json(
+          { error: 'not_ready', message: 'AI 还在理解你的表达，稍等一下再选画幅。' },
+          { status: 409 },
+        )
+      }
+      record.fields.aspectRatio = parsed.data.aspectRatio
+      record.sources.aspectRatio = 'user'
+      await intentService.saveExtracted(id, record, {
+        provider: 'intent-engine',
+        model: 'aspect-patch',
+        degraded: false,
+        actorId: user.id,
+      })
+      return Response.json({
+        status: 'IDEA',
+        record,
+        questions: [],
+        message: parsed.data.aspectRatio === '16:9' ? '已切换为横屏 16:9。' : '已切换为竖屏 9:16。',
+      })
+    }
+
     const extraction = await extractIntent(
       { rawExpression, answers: parsed.data.answers, askedQuestions: asked },
       { contentId: id, purpose: 'intent.extract', actorId: user.id },
     )
+
+    // 画幅（用户意志的持久性——两道防线）：
+    //   1. 本轮显式覆盖（UI 直改钮与抽取同轮提交）：用户意志优先于 LLM 猜测；
+    //   2. 历史用户选择持久：confirm/answers 轮重新抽取时，LLM 可能把用户已切换的画幅
+    //      重置回默认——若上一记录 sources.aspectRatio === 'user' 且本轮无显式覆盖，则原样保留。
+    if (parsed.data.aspectRatio != null) {
+      extraction.record.fields.aspectRatio = parsed.data.aspectRatio
+      extraction.record.sources.aspectRatio = 'user'
+    } else {
+      const prevRecord = intentRow ? intentService.parseRecord(intentRow) : null
+      if (prevRecord?.sources.aspectRatio === 'user' && prevRecord.fields.aspectRatio) {
+        extraction.record.fields.aspectRatio = prevRecord.fields.aspectRatio
+        extraction.record.sources.aspectRatio = 'user'
+      }
+    }
 
     await intentService.saveExtracted(id, extraction.record, {
       provider: extraction.provider ?? 'intent-engine',

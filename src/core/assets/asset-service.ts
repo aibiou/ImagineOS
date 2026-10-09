@@ -185,11 +185,32 @@ export const assetService = {
   /**
    * 批量解析作品的当前视觉资产（列表页视觉化卡片的数据源）。
    * 权威映射：content × 当前版本 × 最近成功的 video.render Job → final/poster。
+   * 多画幅（cinema-product-021）：附带成片宽高（展示面自适应画幅的依据；未知为 null）。
    */
   async visualsForContents(
     list: Array<{ id: string; currentVersionId: string | null }>,
-  ): Promise<Map<string, { finalAssetId: string | null; posterAssetId: string | null; durationMs: number | null }>> {
-    const out = new Map<string, { finalAssetId: string | null; posterAssetId: string | null; durationMs: number | null }>()
+  ): Promise<
+    Map<
+      string,
+      {
+        finalAssetId: string | null
+        posterAssetId: string | null
+        durationMs: number | null
+        width: number | null
+        height: number | null
+      }
+    >
+  > {
+    const out = new Map<
+      string,
+      {
+        finalAssetId: string | null
+        posterAssetId: string | null
+        durationMs: number | null
+        width: number | null
+        height: number | null
+      }
+    >()
     if (list.length === 0) return out
     const ids = list.map((c) => c.id)
     const jobs = await db.generationJob.findMany({
@@ -202,13 +223,16 @@ export const assetService = {
       arr.push({ versionId: job.versionId, outputJson: job.outputJson })
       byContent.set(job.contentId, arr)
     }
+    // 先解析出每个作品的成片资产 id，再一次性批量取宽高（避免逐作品 N 次查询）
+    const parsedByContent = new Map<string, { finalAssetId: string | null; posterAssetId: string | null; durationMs: number | null }>()
+    const allFinalIds: string[] = []
     for (const content of list) {
       const candidates = byContent.get(content.id) ?? []
       // 优先当前版本的产物；无则最近一次（历史版本也可作视觉占位）
       const chosen =
         candidates.find((j) => j.versionId && j.versionId === content.currentVersionId) ?? candidates[0]
       if (!chosen?.outputJson) {
-        out.set(content.id, { finalAssetId: null, posterAssetId: null, durationMs: null })
+        parsedByContent.set(content.id, { finalAssetId: null, posterAssetId: null, durationMs: null })
         continue
       }
       try {
@@ -217,14 +241,24 @@ export const assetService = {
           posterAssetId?: string
           durationMs?: number
         }
-        out.set(content.id, {
+        const entry = {
           finalAssetId: parsed.finalAssetId ?? null,
           posterAssetId: parsed.posterAssetId ?? null,
           durationMs: parsed.durationMs ?? null,
-        })
+        }
+        parsedByContent.set(content.id, entry)
+        if (entry.finalAssetId) allFinalIds.push(entry.finalAssetId)
       } catch {
-        out.set(content.id, { finalAssetId: null, posterAssetId: null, durationMs: null })
+        parsedByContent.set(content.id, { finalAssetId: null, posterAssetId: null, durationMs: null })
       }
+    }
+    // 成片宽高（多画幅展示面自适应；旧资产无宽高记录则为 null）
+    const finalRows = allFinalIds.length > 0 ? await this.getByIds(allFinalIds) : []
+    const dimsById = new Map(finalRows.map((r) => [r.id, { width: r.width, height: r.height }]))
+    for (const content of list) {
+      const entry = parsedByContent.get(content.id)!
+      const dims = entry.finalAssetId ? dimsById.get(entry.finalAssetId) : undefined
+      out.set(content.id, { ...entry, width: dims?.width ?? null, height: dims?.height ?? null })
     }
     return out
   },

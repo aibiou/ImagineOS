@@ -8,7 +8,9 @@ import { contentService } from '@/core/content/content-service'
 import { versionService } from '@/core/content/version-service'
 import { planService } from '@/core/planning/plan-service'
 import { jobService } from '@/core/jobs/job-service'
-import { serializeStructure, type VersionStructureInput } from '@/core/content/schemas'
+import { serializeStructure, VersionStructureSchema, type VersionStructureInput } from '@/core/content/schemas'
+import { summarizeStructureDiff } from '@/core/content/structure-diff'
+import { provenanceRepo } from '@/core/repositories/provenance-repo'
 
 /** 入队失败也要可见（不能留下 GENERATING 无 Job 孤儿）：标记后原样抛出，调用方拿到错误 */
 async function enqueueOrMark(contentId: string, input: Parameters<typeof jobService.enqueue>[0]) {
@@ -176,11 +178,53 @@ export const generationFlow = {
     }
     await assertNoActiveJob(contentId)
 
+    // ---- 画幅守卫（代码保证，非祈祷）：修订定位器输出可能丢失非叙事字段——
+    // 修订方案未显式携带画幅时，沿用当前版本的密封画幅，防止 16:9 作品一改变回 9:16
+    const currentVersion = content.currentVersionId
+      ? await versionRepo.findById(db, content.currentVersionId)
+      : null
+    let beforeStructure: ReturnType<typeof VersionStructureSchema.parse> | null = null
+    if (currentVersion?.structureJson) {
+      try {
+        beforeStructure = VersionStructureSchema.parse(JSON.parse(currentVersion.structureJson))
+      } catch {
+        beforeStructure = null
+      }
+    }
+    const structure: VersionStructureInput = {
+      ...input.structure,
+      aspectRatio: input.structure.aspectRatio ?? beforeStructure?.aspectRatio,
+    }
+
     const version = await versionService.createVersion(contentId, actorId, {
       method: 'revision',
       changelog: input.changelog,
-      structure: input.structure,
+      structure,
     })
+
+    // ---- 修订差异账本（可观测性）：声称改哪层 vs 实际改哪层，从此互证——
+    // 写入 Provenance（revision.applied）：changedPaths（稳定记号）+ changedLayers（层级计数）
+    try {
+      const after = VersionStructureSchema.parse(JSON.parse(serializeStructure(structure)))
+      const diff = summarizeStructureDiff(beforeStructure, after)
+      await provenanceRepo.append(db, {
+        contentId,
+        versionId: version.id,
+        eventType: 'ai_generated',
+        actorType: 'system',
+        provider: 'pipeline',
+        model: 'revision-diff',
+        payload: {
+          stage: 'revision.applied',
+          feedback: input.changelog.slice(0, 200),
+          changedLayers: diff.changedLayers,
+          changedPaths: diff.changedPaths.slice(0, 40),
+          changedCount: diff.changedPaths.length,
+        },
+      })
+    } catch (e) {
+      console.warn(`[revision] 差异账本写入失败（不影响修订）：${e instanceof Error ? e.message : e}`)
+    }
 
     await advanceToGenerating(contentId, actorId)
     const job = await enqueueOrMark(contentId, {

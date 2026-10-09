@@ -70,6 +70,23 @@ export const COPY = {
   latestVersion: '最新版本',
 } as const
 
+// ---------- 画幅（多画幅支持 / cinema-product-021） ----------
+
+/** 画幅的用户语言（IdeaStage 切换钮 + 各阶段徽章） */
+export const ASPECT_COPY = {
+  label: '画幅',
+  '9:16': '竖屏 9:16',
+  '16:9': '横屏 16:9',
+  hint: '竖屏适合手机全屏刷到，横屏适合电脑和大屏观看。随时可以切换。',
+  vertical: '竖屏',
+  horizontal: '横屏',
+} as const
+
+/** 画幅徽章文案 */
+export function aspectBadgeLabel(ar: string | null | undefined): string {
+  return ar === '16:9' ? ASPECT_COPY['16:9'] : ASPECT_COPY['9:16']
+}
+
 // ---------- 生成模式（2026-10-07：真实产物路径必须对用户可见） ----------
 
 /** 生成模式的用户语言（诚实披露：合成动图 ≠ AI 视频模型产物） */

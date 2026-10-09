@@ -40,7 +40,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
+import { ASPECT_COPY, CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -147,6 +147,13 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
   // 镜头列表（Hooks 必须在条件返回之前）
   const shots = useMemo(() => (bundle?.story?.scenes ?? []).flatMap((s) => s.shots), [bundle?.story])
 
+  // 画幅（多画幅）：意图层权威值（用户原话识别 / UI 直改）；缺省 9:16。预览面全部从这一源派生
+  const aspectRatio = useMemo(
+    () => ((bundle?.intent?.record?.fields as Record<string, unknown> | undefined)?.aspectRatio === '16:9' ? '16:9' : '9:16') as '9:16' | '16:9',
+    [bundle?.intent?.record?.fields],
+  )
+  const aspectClass = aspectRatio === '16:9' ? 'aspect-[16/9]' : 'aspect-[9/16]'
+
   // 生成失败判定：无活跃 Job 且有失败标记 / 终态失败 Job（不再无限「AI 生成中」）
   const jobActive = bundle?.job != null && ['queued', 'claimed', 'running'].includes(bundle.job.status)
   const jobFailed = bundle?.job != null && (bundle.job.status === 'failed' || bundle.job.status === 'timeout')
@@ -182,6 +189,21 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       window.history.replaceState(null, '', `/create/${id}`)
     })
   }, [bundle, status, id, fireOnce])
+
+  // IDEA 且尚无结构化理解 → 自动理解（渐进可见：首屏不再空卡片，秒级出现「我听到了这些」+ 画幅切换钮）
+  useEffect(() => {
+    if (!bundle || status !== 'IDEA' || bundle.intent?.record) return
+    void fireOnce(`intent-${bundle.content.id}`, async () => {
+      setBusy('intent-auto')
+      const { ok } = await postJson(`/api/contents/${id}/intent`, {})
+      setBusy(null)
+      if (!ok) {
+        autoFired.current.delete(`intent-${bundle.content.id}`)
+        return
+      }
+      await load(true)
+    })
+  }, [bundle, status, id, fireOnce, load])
 
   // INTENT 且无方向 → 自动生成一批
   useEffect(() => {
@@ -264,6 +286,21 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     if (qs.length === 0) toast({ title: '我理解了', description: '没有其他问题了，继续下一步。' })
     else toast({ title: '还想听你说完', description: '回答或跳过都可以。' })
   }, [questionAnswers, id, load, toast])
+
+  // 画幅直改（零 LLM：服务端轻量补丁通道；来源标 user）
+  const pickAspect = useCallback(
+    async (aspectRatio: '9:16' | '16:9') => {
+      setBusy('intent-aspect')
+      const { ok, json } = await postJson(`/api/contents/${id}/intent`, { aspectRatio })
+      setBusy(null)
+      if (!ok) {
+        toast({ title: '画幅没有切换', description: json.message ?? '稍后再试', variant: 'destructive' })
+        return
+      }
+      await load(true)
+    },
+    [id, load, toast],
+  )
 
   const analyzeRevision = useCallback(async () => {
     const feedback = revisionText.trim()
@@ -399,7 +436,7 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       )}
 
       {/* ---- IDEA：AI 理解 + 访谈 ---- */}
-      {status === 'IDEA' && <IdeaStage bundle={bundle} questions={questions} answers={answers} setAnswers={setAnswers} busy={busy === 'intent'} onAsk={() => void askIntent()} onConfirm={() => void confirmIntent()} />}
+      {status === 'IDEA' && <IdeaStage bundle={bundle} questions={questions} answers={answers} setAnswers={setAnswers} busy={busy === 'intent' || busy === 'intent-auto'} aspectBusy={busy === 'intent-aspect'} onPickAspect={(ar) => void pickAspect(ar)} onAsk={() => void askIntent()} onConfirm={() => void confirmIntent()} />}
       {/* ---- INTENT：方向选择 ---- */}
       {(status === 'INTENT' || status === 'PLANNING') && (
         <DirectionStage directions={plan.directions} loading={busy === 'directions'} selectedId={plan.concept?.directionId} onSelect={(directionId) => void act('select', `/api/contents/${id}/directions/select`, { directionId }, '方向已锁定')}
@@ -433,12 +470,12 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
             }
           />
         ) : (
-          <GeneratingStage status={status} job={job} shots={shots} shotImages={assets.shots} />
+          <GeneratingStage status={status} job={job} shots={shots} shotImages={assets.shots} aspectClass={aspectClass} />
         ))}
 
       {/* ---- REVIEW：预览与调整 ---- */}
       {status === 'REVIEW' && (
-        <ReviewStage shots={shots} shotImages={assets.shots} busy={busy} generationMode={bundle.generationMode}
+        <ReviewStage shots={shots} shotImages={assets.shots} busy={busy} generationMode={bundle.generationMode} aspectClass={aspectClass}
           onRender={() => void act('render', `/api/contents/${id}/render`, undefined, '开始合成你的视频')}
           onRevise={() => setRevisionOpen(true)}
           onRegenerate={() => void act('regenerate', `/api/contents/${id}/regenerate`, undefined, '换一批画面，重新来过')} />
@@ -449,7 +486,7 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
 
       {/* ---- READY / PUBLISHED：成片与发布 ---- */}
       {(status === 'READY' || status === 'PUBLISHED') && (
-        <FinishStage bundle={bundle} busy={busy}
+        <FinishStage bundle={bundle} busy={busy} aspectClass={aspectClass}
           onPublish={status === 'READY' ? () => void publish() : undefined}
           onRevise={() => setRevisionOpen(true)}
           onRegenerate={() => void act('regenerate', `/api/contents/${id}/regenerate`, undefined, '换一批画面，重新来过')}
@@ -562,6 +599,8 @@ function IdeaStage({
   answers,
   setAnswers,
   busy,
+  aspectBusy,
+  onPickAspect,
   onAsk,
   onConfirm,
 }: {
@@ -570,6 +609,8 @@ function IdeaStage({
   answers: Record<string, string>
   setAnswers: React.Dispatch<React.SetStateAction<Record<string, string>>>
   busy: boolean
+  aspectBusy: boolean
+  onPickAspect: (aspectRatio: '9:16' | '16:9') => void
   onAsk: () => void
   onConfirm: () => void
 }) {
@@ -584,23 +625,60 @@ function IdeaStage({
   if (typeof f.visual_style === 'string') chips.push({ label: '画面风格', value: f.visual_style === 'cinematic_realism' ? '电影感真实' : String(f.visual_style), fromUser: sources.visual_style === 'user' })
   if (Array.isArray(f.characters) && f.characters.length > 0) chips.push({ label: '人物', value: (f.characters as Array<{ name: string }>).map((c) => c.name).join('、'), fromUser: sources.characters === 'user' })
 
+  // 画幅（多画幅）：AI 从原话识别（或默认 9:16），用户一键切换（来源转 user）
+  const currentAspect = f.aspectRatio === '16:9' ? '16:9' : '9:16'
+  const aspectFromUser = sources.aspectRatio === 'user'
+  const understanding = record == null
+
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
       <Card className="border-white/10 bg-zinc-900/60">
         <CardContent className="p-6">
           <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-            <Sparkles className="size-4 text-fuchsia-400" aria-hidden /> 我听到了这些
+            <Sparkles className="size-4 text-fuchsia-400" aria-hidden /> {understanding ? '正在听你说…' : '我听到了这些'}
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {chips.map((c) => (
-              <span key={c.label} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${c.fromUser ? 'border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200' : 'border-white/10 bg-white/5 text-zinc-300'}`}>
-                <span className="text-zinc-500">{c.label}</span>
-                {c.value}
-                {!c.fromUser && <span className="text-[10px] text-zinc-500">(我猜的)</span>}
-              </span>
-            ))}
-          </div>
-          <p className="mt-4 text-xs leading-relaxed text-zinc-500">标了「我猜的」的部分，是 AI 替你做的决定——你可以在下面补充，或直接继续。</p>
+          {understanding ? (
+            <div className="mt-4 flex items-center gap-2 text-xs text-zinc-500">
+              <Loader2 className="size-3.5 animate-spin" aria-hidden /> 正在理解你的表达，几秒钟就好…
+            </div>
+          ) : (
+            <>
+              <div className="mt-4 flex flex-wrap gap-2">
+                {chips.map((c) => (
+                  <span key={c.label} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs ${c.fromUser ? 'border-fuchsia-400/30 bg-fuchsia-500/10 text-fuchsia-200' : 'border-white/10 bg-white/5 text-zinc-300'}`}>
+                    <span className="text-zinc-500">{c.label}</span>
+                    {c.value}
+                    {!c.fromUser && <span className="text-[10px] text-zinc-500">(我猜的)</span>}
+                  </span>
+                ))}
+              </div>
+              {/* 画幅切换（多画幅）：AI 已识别默认值，用户可一键改 */}
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <span className="text-xs text-zinc-500">{ASPECT_COPY.label}</span>
+                <div className="inline-flex rounded-lg border border-white/10 bg-zinc-950 p-0.5">
+                  {(['9:16', '16:9'] as const).map((ar) => (
+                    <button
+                      key={ar}
+                      type="button"
+                      onClick={() => currentAspect !== ar && onPickAspect(ar)}
+                      disabled={aspectBusy || currentAspect === ar}
+                      className={`rounded-md px-3 py-1.5 text-xs transition ${
+                        currentAspect === ar
+                          ? 'bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white'
+                          : 'text-zinc-400 hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+                      }`}
+                      aria-pressed={currentAspect === ar}
+                    >
+                      {aspectBusy ? <Loader2 className="mr-1 inline size-3 animate-spin" aria-hidden /> : null}
+                      {ar === '9:16' ? ASPECT_COPY.vertical : ASPECT_COPY.horizontal}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-[11px] text-zinc-600">{ASPECT_COPY[currentAspect]}{!aspectFromUser && '（我猜的，可切换）'}</span>
+              </div>
+              <p className="mt-3 text-xs leading-relaxed text-zinc-500">标了「我猜的」的部分，是 AI 替你做的决定——你可以在下面补充，或直接继续。{ASPECT_COPY.hint}</p>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -908,11 +986,13 @@ function GeneratingStage({
   job,
   shots,
   shotImages,
+  aspectClass,
 }: {
   status: string
   job: CreationBundle['job']
   shots: NonNullable<CreationBundle['story']>['scenes'][number]['shots']
   shotImages: CreationBundle['assets']['shots']
+  aspectClass: string
 }) {
   const label = job?.label ?? (status === 'RENDERING' ? '正在把画面、声音与字幕合成为完整的视频…' : 'AI 创作团队正在工作…')
   const pct =
@@ -946,7 +1026,7 @@ function GeneratingStage({
             {shots.map((_, i) => {
               const url = imageByIndex.get(i)
               return (
-                <div key={i} className={`relative aspect-[9/16] overflow-hidden rounded-lg border ${url ? 'border-fuchsia-400/30' : 'border-white/10 bg-zinc-900'}`}>
+                <div key={i} className={`relative ${aspectClass} overflow-hidden rounded-lg border ${url ? 'border-fuchsia-400/30' : 'border-white/10 bg-zinc-900'}`}>
                   {url ? (
                      
                     <motion.img
@@ -980,6 +1060,7 @@ function ReviewStage({
   shotImages,
   busy,
   generationMode,
+  aspectClass,
   onRender,
   onRevise,
   onRegenerate,
@@ -988,6 +1069,7 @@ function ReviewStage({
   shotImages: CreationBundle['assets']['shots']
   busy: string | null
   generationMode: CreationBundle['generationMode']
+  aspectClass: string
   onRender: () => void
   onRevise: () => void
   onRegenerate: () => void
@@ -1018,7 +1100,7 @@ function ReviewStage({
       <div className="space-y-3">
         {shots.map((shot, i) => (
           <div key={i} className="flex gap-4 overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/50">
-            <div className="relative aspect-[9/16] w-28 shrink-0 bg-zinc-950 sm:w-32">
+            <div className={`relative ${aspectClass} w-28 shrink-0 bg-zinc-950 sm:w-32`}>
               {imageByIndex.get(i) ? (
                  
                 <img src={imageByIndex.get(i)!} alt={`第 ${i + 1} 个镜头`} className="h-full w-full object-cover" />
@@ -1065,6 +1147,7 @@ function ReviewStage({
 function FinishStage({
   bundle,
   busy,
+  aspectClass,
   onPublish,
   onRevise,
   onRegenerate,
@@ -1072,6 +1155,7 @@ function FinishStage({
 }: {
   bundle: CreationBundle
   busy: string | null
+  aspectClass: string
   onPublish?: () => void
   onRevise: () => void
   onRegenerate: () => void
@@ -1129,7 +1213,7 @@ function FinishStage({
           preload="metadata"
           poster={assets.poster?.url}
           src={assets.final!.url}
-          className="mx-auto aspect-[9/16] max-h-[72vh] w-full object-contain"
+          className={`mx-auto ${aspectClass} max-h-[72vh] w-full object-contain`}
         />
       </div>
 

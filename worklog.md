@@ -767,3 +767,34 @@ Stage Summary:
 - 一致性证据链范式成型：单测（158）→ 账本 prompt 直接证据 → VLM 独立盲评，三层互证
 - 人物一致性（018）+ 世界一致性（020）合并：影视层面全面一致性的代码基座齐备
 - 剩余目标（下阶段）：BGM 自动配乐（ffmpeg 闪避已就绪，欠音乐生成源——供给侧依赖）；多画幅（当前固定 9:16）；修订定位器吸收 lookBook/locationAnchor 语义（「色调再暖一点」应落到 lookBook 层）；native 占比仍受 agnes RPM=1 供给约束
+
+---
+Task ID: cinema-product-021
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 持续优化到产品级——020 遗留双目标落地：①多画幅支持（9:16 竖屏 + 16:9 横屏全链路）②修订定位器语义升级（吸收 lookBook/locationAnchor/visualAnchor 分层语义）
+
+Work Log:
+- 目标设定依据：020 Stage Summary 遗留「修订定位器吸收 lookBook/locationAnchor 语义 + 多画幅（当前固定 9:16）」；BGM 依赖音乐生成源（供给侧缺失）与 native 占比（agnes RPM=1）非纯代码任务，本轮不做
+- 多画幅·Schema：ASPECT_RATIOS=['9:16','16:9'] + AspectRatioSchema；IntentFields.aspectRatio（上游：原话识别/UI 直改）+ VersionStructure.aspectRatio（随配方密封，缺省 9:16 向后兼容零迁移）
+- 多画幅·纯函数模块 src/core/content/aspect.ts：aspectRatioOf/imageSizeForAspect(768x1344|1344x768)/videoSizeForAspect(720x1280|1280x720)/renderDimensionsForAspect(720x1280|1280x720)/aspectFromDimensions(展示面推断)/aspectFromExpression(横屏|宽屏|16:9 正则)
+- 多画幅·意图链路：INTENT_SYSTEM 规则8+JSON hint 教画幅识别；heuristicIntent 用 aspectFromExpression 兜底（来源标 user/ai_default）；intent 路由新增画幅直改通道（仅 aspectRatio 无 answers/confirm 时零 LLM 补丁，来源标 user）+ 用户画幅跨 confirm/answers 重抽取持久（防线2：prevRecord.sources.aspectRatio==='user' 则保留——修复 confirm 轮重抽取冲掉用户选择的缺陷）
+- 多画幅·密封与守卫：plan-service.buildVersionStructure 从意图行密封 aspectRatio（防御性解析，意图优先/旧版本兜底）；generation-flow.applyRevision 画幅守卫（input.structure.aspectRatio ?? currentVersion.aspectRatio——修订定位器丢字段也不回 9:16，代码保证非祈祷）
+- 多画幅·管线四点：pipeline-executor 图像 1344x768/视频 1280x720/渲染 renderDimensionsForAspect/资产宽高同源；render.done Provenance 增 aspectRatio+resolution 字段；registry.promptSummaryOf 账本补记 payload.size（画幅声明的调用时刻证据）
+- 多画幅·UI 全链路：IdeaStage 画幅切换钮（竖屏|横屏，来源非 user 时标「我猜的，可切换」）+ IDEA 首屏自动理解 effect（修复首屏空卡片——渐进可见原则，record 为空时 POST /intent {} 秒级出 chips）；GeneratingStage/ReviewStage/FinishStage 预览画幅 class 从意图层派生（aspect-[16/9] 字面量双写保 Tailwind JIT）；分享页 /w/[id] 宽版式(560px)+16:9 播放器；首页播放弹窗自适应（aspectFromDimensions 经 visualsForContents 批量带出成片宽高——先解析后单批查询避免 N+1）
+- 修订定位器·语义升级 src/ai/revision/locator.ts：REVISION_SYSTEM 重写为分层定位方法论（style 层=lookBook 全片视觉圣经改一处自动传播/scene 层=locationAnchor+timeOfDay/character 层=visualAnchor/shot 层=单镜特例/story 层=叙事/aspectRatio 绝不改且逐字保留）+ 六条常见模式含 lookBook 单点修改示例；新增 revisionLayerMap 纯函数（可用修订层菜单+现值截断+未建立层标「可创建」）注入 user prompt——定位从 LLM 摸原始 JSON 升级为面对明确菜单做选择题
+- 修订可观测性 src/core/content/structure-diff.ts：summarizeStructureDiff 纯函数（稳定路径记号 story.lookBook/scene[2].locationAnchor/shot[5].imagePrompt/character[老板].visualAnchor/aspectRatio；≤80 条防膨胀）；applyRevision 写入 Provenance revision-diff 事件（changedLayers+changedPaths+changedCount）——计划声称改哪层 vs 实际改哪层从此账本互证
+- 测试 tests/cinema-product-logic.test.ts +16（画幅枚举拒脏值/三尺寸映射/aspectRatioOf 缺省兼容/原话识别正则/宽高推断/层级菜单含现值与可创建/差异摘要五场景/画幅守卫 round-trip/非法画幅 schema 拒）→ 全量 174/174；tsc 0 错误；eslint 0 错误
+- 真实管线 E2E（「横屏做一个深夜修表铺的短片：老修表匠每晚留一盏灯，等一个再也没回来的客人」，断点续跑五段）：意图层 LLM 直接识别 aspectRatio=16:9 来源 user（prompt 教学兑现）；故事 lookBook「Warm amber lamplight against cold blue night…35mm film grain」；5 镜生成 mode=hybrid native 2/5（agnes RPM=1 诚实回落）；成片 42.6s h264 **1280x720** + aac44100（资产表宽高 1280/720 同源）；分镜图像实测 1312x736（agnes 1K 档对 1344x768 的供给侧归一，16:9 比例保持，渲染层 scale+crop 精确归一——断言口径按「宽幅 16:9」而非字面 1344x768）；帧抽取 3 张
+- 修订定位器 E2E（成片 READY 后反馈「色调再暖一点，全片整体往暖琥珀调走」）：targetLevel=style ✓；summary=「把全片视觉圣经调成浓郁暖琥珀金色调」；reason 明说「只改 story.lookBook 一处，执行层会自动注入每一镜，无需逐镜改写」（分层方法论被 LLM 复述——教学生效）；lookBook 变化 ✓ 且 5 镜 imagePrompt 逐字不变 ✓（外科手术级修订）；affectedShotIndexes=[0-4]（全片传播口径正确）
+- 画幅守卫 E2E：提交时显式删掉 aspectRatio → 新版本密封仍 16:9 ✓；revision-diff 账本事件 changedLayers={lookBook:1} changedPaths=['story.lookBook'] changedCount=1（恰好一处修改的机器可读证明）；修订重生成完成 REVIEW 后清场 DELETE 200，平台仅剩用户自己的 IDEA 内容
+- VLM 三帧盲评（glm 视觉模型）：16:9 宽幅构图 ✓（「标准宽幅横向构图，画面左右空间充裕，符合电影级宽银幕叙事比例」）；字幕烧录 ✓（第三帧转录出「每晚他都擦净空椅，把灯留在窗边。」）；色调一致性 ✓✓（「暖琥珀 vs 冷蓝」冷暖对冲——lookBook 逐词落画，「三帧中所有人工光源均为统一色温的暖黄光」）；同一部片子 ✓（影调/质感/美术风格完全一致）
+- UI 浏览器验证（1440×900 agent-browser）：IDEA 首屏「正在听你说…」→ 秒级出 chips（自动理解生效，首屏不再空卡片）+ 画幅切换钮渲染（竖屏|横屏 + 「竖屏 9:16（我猜的，可切换）」）；点击横屏 → 「横屏 16:9」生效且「我猜的」标注消失（来源转 user 的直接 UI 证据）；截图 cinema-aspect-toggle.png；验证内容 DELETE 200 清场
+- 环境坑（再次确认+新解法）：Bash 后台进程跨调用必被回收（nohup+disown+stdin 脱离均无效）——E2E 改「前台分段 + timeout + 断点续跑」模式（服务端 Job 独立于客户端存活，客户端只轮询）；断点恢复需状态感知（intent 段 DB 权威读取/story 段 creation 聚合读取/generate+render 段按 content.status 分流——服务端可能在客户端死亡后完成推进）
+
+Stage Summary:
+- 多画幅全链闭环：意图识别（LLM 原话识别 + 启发式兜底 + UI 一键直改零 LLM）→ 配方密封 → 管线四点（图像/视频/渲染/资产）→ 展示面（创作空间三阶段 + 分享页宽版式 + 首页播放弹窗）——16:9 成片 ffprobe 1280x720 + VLM 宽幅构图盲评双重实证
+- 修订定位器从「M1 简化」升级为「分层语义」：lookBook/locationAnchor/visualAnchor 单点修改全片传播的正道被 prompt 教学明确 + revisionLayerMap 菜单化；E2E 证明「色调再暖」命中 style 层且 5 镜 imagePrompt 逐字不变（差异账本 changedCount=1 的机器可读外科手术证据）
+- 画幅守卫 + 修订差异账本：修订丢字段不回 9:16（代码保证）；每次修订的「声称 vs 实际」改动层有 Provenance 互证
+- IDEA 首屏自动理解：渐进可见原则落地（首屏不再空卡片等待用户点击）
+- 测试 158→174（+16）；tsc/eslint 全绿；供给矩阵：Ling 5/5 LLM、agnes-image 5/5、视频 agnes 5 提交+zai 11 次尝试（RPM=1 诚实回落 hybrid 2/5 native）、zai-tts 6/6
+- 已知边界：agnes 图像 1K 档对请求尺寸做供给侧归一（1344x768→1312x736，比例保持，渲染层精确归一）；BGM 自动配乐仍欠音乐生成源（供给侧依赖，未列入本轮）
