@@ -37,6 +37,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     const remixOf = await contentService.getRemixLineage(id)
 
     // 活跃 Job 进度；无活跃 Job 时回查最近终态失败 Job（失败必须可见，不能无限「AI 生成中」）
+    // createdAt：等待叙事的计时锚点（服务端权威时间，刷新后已耗时不丢）
     const activeJob = await jobService.activeJobForContent(id)
     let job: Record<string, unknown> | null = null
     if (activeJob) {
@@ -46,6 +47,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
         type: activeJob.type,
         status: activeJob.status,
         retryCount: activeJob.retryCount,
+        createdAt: activeJob.createdAt,
         ...output,
       }
     } else {
@@ -56,6 +58,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           type: failedJob.type,
           status: failedJob.status,
           retryCount: failedJob.retryCount,
+          createdAt: failedJob.createdAt,
           error: failedJob.error ?? null,
           failedAt: failedJob.completedAt ?? failedJob.updatedAt,
         }

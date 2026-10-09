@@ -798,3 +798,27 @@ Stage Summary:
 - IDEA 首屏自动理解：渐进可见原则落地（首屏不再空卡片等待用户点击）
 - 测试 158→174（+16）；tsc/eslint 全绿；供给矩阵：Ling 5/5 LLM、agnes-image 5/5、视频 agnes 5 提交+zai 11 次尝试（RPM=1 诚实回落 hybrid 2/5 native）、zai-tts 6/6
 - 已知边界：agnes 图像 1K 档对请求尺寸做供给侧归一（1344x768→1312x736，比例保持，渲染层精确归一）；BGM 自动配乐仍欠音乐生成源（供给侧依赖，未列入本轮）
+
+---
+Task ID: ux-plan-async-022
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人 UX 三痛点反馈闭环——「IDEA 到展开故事半天没反应要刷新才出来 / 整体布局太窄 / 拆分镜头一直转圈看不到过程会失去耐心」
+
+Work Log:
+- 根因诊断（三个都不是玄学，是结构性的）：①/story 与 /storyboard 是同步长阻塞 HTTP——分钟级 LLM（含 429 冷却重试）全程占死一个 fetch，前端只能裸转圈；fetch 断连即界面僵死（刷新才见结果），刷新又导致重复入队重复烧配额 ②创作空间 Shell max-w-3xl(768px)，宽屏两侧大片留白 ③所有等待态均无过程叙事/计时，用户心理上黑盒=卡死
+- 核心改造·规划层 LLM Job 化：新增 story.draft / storyboard.plan 两个 Job 类型（pipeline-executor 执行器 + planService.startStoryDraft/startStoryboardPlan 入队方法 + 两路由改为入队即返回）——复用既有 §53 纪律「绝不靠长 HTTP 请求维持生成」，进度与完成由前端轮询 /creation 接续；幂等三重防（路由 activeJob 复用 / worker 状态守卫 skipped / fireOnce 会话防重）；失败走 Job fail 铁律（状态机原地不动 + lastError 用户可见 + 退避重试）
+- 等待心理学落地：语言字典新增 STORY_WAIT/STORYBOARD_WAIT/DIRECTIONS_WAIT 时间轴叙事（AI 此刻真实在做的事）+ elapsedLabel 已耗时；新组件 NarrativeProgress（叙事轮播 fade 切换 + Timer 计时 + 参考时长 + 重试提示）——诚实原则：LLM 单次调用没有真实百分比，绝不伪造进度条，用「叙事+已耗时」替代；计时锚点优先服务端 job.createdAt（刷新后已耗时不丢），同步等待退化组件内 ref lazy-init
+- 页面重构：PLANNING 展开中显示 PlanWaitingStage 全宽叙事卡（含「完成后这里会自动出现——不用刷新页面」安抚语）/ 失败显示 PlanFailedStage（错误原因+再试一次）；STORY 拆分中叙事卡内联在故事下方（保留上下文，不清空页面）+ 失败内联重试；DirectionStage 等待升级叙事卡（计时由 ref 锚定，ESLint set-state-in-effect 合规）
+- 轮询接续：generating 条件扩至任意活跃 Job——规划层 Job 期间每 2.5s 轮询，故事/分镜完成自动出现（零刷新）；story 自动推进 effect 增加「有失败标记不自动重试」防线（诚实失败交给用户明确的再试一次）
+- 同步链路保险：postJson 网络错误兜底（不抛异常）+ AbortSignal.timeout 可选超时；directions 150s 超时后先 load 再判断（服务端可能已在断连后完成落库，避免误报）
+- 布局自适应：Shell max-w-3xl→6xl（header+main，实测 1152px）；方向 lg:grid-cols-3 / 场景 md:grid-cols-2 / 人物 lg:grid-cols-3 / 分镜 lg:grid-cols-3 / 预览 xl:grid-cols-2 / 生成缩略 lg:grid-cols-6
+- creation 聚合：job 序列化补 createdAt（等待计时锚点，活跃与失败两侧）
+- 测试：tests/plan-async-jobs.test.ts +7（入队语义 payload actorId / 幂等防重复用同一 jobId / 退避中 queued 也算活跃 / 状态守卫双方向 / 并发推进幂等 skipped 不写失败标记 / STORY 无故事 fail-fast）→ 全量 181/181；tsc 0 错误；eslint 0 错误（修掉一处 set-state-in-effect）
+- 浏览器 E2E（1440×900 真实管线，凌晨地铁站清洁工捡日记故事）：POST /story、POST /storyboard 均秒回 200 ✓；等待卡「正在展开你的故事…已进行 2 秒…这一步通常需要 1–2 分钟…完成后这里会自动出现——不用刷新页面」✓；故事经轮询自动出现（一句话故事+三幕情绪走向+lookBook+3 场景全带戏剧功能与锚点，同地点锚点逐字一致——020 世界一致性在异步链路下依旧生效）零刷新 ✓；拆分等待内联显示「正在拆分镜头…已进行 1 秒」✓；分镜自动出现（3 镜远景→特写→大远景，硬切→叠化）零刷新 ✓；reload 后状态完好恢复 STORYBOARD ✓；console 零错误；截图 plan-async-story-stage-wide.png / plan-async-storyboard-stage-wide.png 入 download/ui-e2e/；VLM 盲评两图各三项全过（宽屏利用/多列网格/无破版）；DELETE 200 清场
+- 环境坑复用：dev server 用 scripts/m15/restart-dev.sh 存活模式；E2E 驱动脚本沿用「客户端只轮询、服务端 Job 独立存活」断点续跑范式；旧 m15 驱动（cinema-e2e 等）的 story/storyboard 同步断言已过时，后续复用需改轮询式（本轮不动）
+
+Stage Summary:
+- 三痛点全部闭环：①「没反应要刷新」→ Job 化 + 轮询接续，刷新甚至关页都不丢（服务端独立推进），回来自动到位 ②「布局窄」→ 6xl + 各阶段响应式多列（VLM 盲评实证）③「转圈失去耐心」→ 叙事轮播 + 已耗时 + 参考时长 + 「不用刷新」安抚 + 失败必可见（重试入口），等待从黑盒变成「看得见的创作过程」
+- 架构一致性：规划层异步化完全复用既有 Job 基建（乐观锁/退避/看门狗/lastError 铁律），零新机制；§53「绝不长请求挂生成」从此覆盖全链路（生成/渲染/故事/分镜）
+- 幂等与配额保护：双击/刷新/断连重连均不重复入队（activeJob 复用 + 状态守卫 + fireOnce），免费配额不再被无意烧掉
+- 已知边界：directions/intent/revision-plan 仍是同步 LLM 等待（已加超时保险与叙事卡，分钟级场景未来可平移本次 Job 化范式）；worker 单循环串行执行规划 Job（单用户 Alpha 无影响，多用户需评估）

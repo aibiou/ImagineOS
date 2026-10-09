@@ -4,6 +4,9 @@
 // 全链：理解 → 方向 → 故事 → 分镜 → AI 生成 → 预览 → 修订 → 渲染 → 发布
 // 纪律：不重构首页（M0 评审 P1）；文案全部走产品语言字典（P0-3）
 // 状态恢复：任何刷新/中断后，页面按 content.status 自动回到正确位置（AC of T8.2.4）
+// 2026-10-09 UX 反馈闭环：①故事/分镜 LLM 改 Job 化（入队即返回 + 轮询接续，
+// 刷新不丢、不重复烧配额）②等待态全部升级为「叙事轮播 + 已耗时 + 参考时长」
+// （不裸转圈、不伪造进度条）③布局自适应宽屏（max-w-6xl + 各阶段响应式多列）
 
 import { use, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
@@ -29,6 +32,7 @@ import {
   Rocket,
   RotateCcw,
   Sparkles,
+  Timer,
   Users,
   Wand2,
 } from 'lucide-react'
@@ -40,7 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { ASPECT_COPY, CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
+import { ASPECT_COPY, CAMERA_LABEL, COPY, CREATE_STEPS, DIRECTIONS_WAIT, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, STORYBOARD_WAIT, STORY_WAIT, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, elapsedLabel, generationModeLabel, versionLabel, versionWithCount, type WaitHint } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -61,7 +65,7 @@ interface CreationBundle {
   plan: { directions: Array<{ id: string; name: string; oneLiner: string; emotion?: string; visualDirection?: string; expectedDurationSec?: number }> | null; concept: { directionId?: string; name?: string; oneLiner?: string; emotion?: string; visualDirection?: string } | null }
   story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; lookBook?: string; characters?: Array<{ name: string; desire?: string; obstacle?: string; arc?: string }>; scenes: Array<{ index: number; summary?: string; location?: string; locationAnchor?: string; dramaticFunction?: string; valueShift?: string; timeOfDay?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; shotSize?: string; transition?: string; charactersInShot?: string[]; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
   version: { number: number; changelog: string | null; createdAt: string } | null
-  job: { id: string; type: string; status: string; retryCount: number; stage?: string; label?: string; current?: number; total?: number; progress?: number; error?: string | null; failedAt?: string } | null
+  job: { id: string; type: string; status: string; retryCount: number; createdAt?: string; stage?: string; label?: string; current?: number; total?: number; progress?: number; error?: string | null; failedAt?: string } | null
   lastError: { code: string; message: string; at: string; jobId: string | null } | null
   assets: {
     final: { url: string; durationMs: number | null } | null
@@ -80,12 +84,29 @@ interface RevisionPlanResult {
 
 // ---------- 小工具 ----------
 
-async function postJson<T = Record<string, unknown>>(url: string, body?: unknown): Promise<{ ok: boolean; status: number; json: T & { message?: string; error?: string } }> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body ? JSON.stringify(body) : undefined,
-  })
+/** POST JSON（网络错误与超时兑底：不抛异常，返回 !ok + 人话错误）。
+ *  timeoutMs：同步长调用（directions/修订规划）的客户端保险——超时后服务端可能
+ *  仍在跑并完成落库，调用方应先 load 再判断是否真的失败。 */
+async function postJson<T = Record<string, unknown>>(
+  url: string,
+  body?: unknown,
+  opts?: { timeoutMs?: number },
+): Promise<{ ok: boolean; status: number; json: T & { message?: string; error?: string } }> {
+  const signal =
+    opts?.timeoutMs && typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(opts.timeoutMs)
+      : undefined
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined,
+      signal,
+    })
+  } catch {
+    return { ok: false, status: 0, json: { message: '网络似乎打了个盹，稍后再试。' } as T & { message?: string } }
+  }
   const json = (await res.json().catch(() => ({}))) as T & { message?: string; error?: string }
   return { ok: res.ok, status: res.status, json }
 }
@@ -118,13 +139,15 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
         if (!res.ok) {
           const j = (await res.json().catch(() => ({}))) as { message?: string }
           setLoadError(j.message ?? '作品不存在或不可见')
-          return
+          return null
         }
         const json = (await res.json()) as CreationBundle
         setBundle(json)
         setLoadError(null)
+        return json
       } catch {
         if (!silent) setLoadError('网络似乎打了个盹，稍后再试。')
+        return null
       }
     },
     [id],
@@ -160,8 +183,22 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
   const generationFailed =
     (status === 'GENERATING' || status === 'RENDERING') && !jobActive && (jobFailed || bundle?.lastError != null)
 
+  // 规划层（故事展开/分镜拆解，2026-10-09 Job 化）：等待必须「有事在发生」，失败必须可见
+  const planJobActive =
+    jobActive && (bundle?.job?.type === 'story.draft' || bundle?.job?.type === 'storyboard.plan')
+  // 故事展开中：PLANNING 且无故事（STORY 且无故事 = 数据不一致，也交给失败卡诚实展示）
+  const storyPending = status === 'PLANNING' || (status === 'STORY' && !bundle?.story)
+  // 分镜拆分中：故事在场（等待叙事内联在故事下方，保留上下文，不清空页面）
+  const storyboardPending = status === 'STORY' && !!bundle?.story
+  const planFailed =
+    (storyPending || storyboardPending) &&
+    !jobActive &&
+    (jobFailed || bundle?.lastError != null || (status === 'STORY' && !bundle?.story))
+
   // 生成中轮询（UX 原则五：每步可见；失败态停止轮询——显示错误与重试入口）
-  const generating = !generationFailed && (status === 'GENERATING' || status === 'RENDERING' || jobActive)
+  // 2026-10-09：规划层 Job（story.draft/storyboard.plan）活跃时同样轮询——
+  // 刷新/断连后页面自动接续，用户不用手动刷新看结果
+  const generating = !generationFailed && !planFailed && (status === 'GENERATING' || status === 'RENDERING' || jobActive)
   useEffect(() => {
     if (!generating) return
     const t = setInterval(() => void load(true), 2500)
@@ -205,25 +242,27 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     })
   }, [bundle, status, id, fireOnce, load])
 
-  // INTENT 且无方向 → 自动生成一批
+  // INTENT 且无方向 → 自动生成一批（同步 LLM：150s 客户端超时保险；超时后先拉一次状态——
+  // 服务端可能已在客户端断连后完成落库，避免误报失败）
   useEffect(() => {
     if (!bundle || status !== 'INTENT' || bundle.plan.directions?.length) return
     void fireOnce(`directions-${bundle.content.id}`, async () => {
       setBusy('directions')
-      const { ok, json } = await postJson(`/api/contents/${id}/directions`)
+      const { ok, json } = await postJson(`/api/contents/${id}/directions`, undefined, { timeoutMs: 150_000 })
       setBusy(null)
-      if (!ok) {
+      const fresh = await load(true)
+      if (!ok && !fresh?.plan.directions?.length) {
         autoFired.current.delete(`directions-${bundle.content.id}`)
         toast({ title: '方向生成未成功', description: json.message ?? '稍后再试', variant: 'destructive' })
-        return
       }
-      await load(true)
     })
   }, [bundle, status, id, fireOnce, load, toast])
 
-  // PLANNING 且无故事 → 自动展开故事
+  // PLANNING 且无故事 → 自动展开故事（Job 化：入队即返回，轮询接续）。
+  // 三重防重：活跃 Job 期间不重发（刷新不重复烧配额）；fireOnce 会话内防重；
+  // 有失败标记时不再自动重试——交给用户明确的「再试一次」按钮（诚实失败）
   useEffect(() => {
-    if (!bundle || status !== 'PLANNING' || bundle.story) return
+    if (!bundle || status !== 'PLANNING' || bundle.story || jobActive || bundle.lastError != null) return
     void fireOnce(`story-${bundle.content.id}`, async () => {
       setBusy('story')
       const { ok, json } = await postJson(`/api/contents/${id}/story`)
@@ -235,7 +274,7 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       }
       await load(true)
     })
-  }, [bundle, status, id, fireOnce, load, toast])
+  }, [bundle, status, id, jobActive, fireOnce, load, toast])
 
   // ---- 动作 ----
   const act = useCallback(
@@ -437,17 +476,37 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
 
       {/* ---- IDEA：AI 理解 + 访谈 ---- */}
       {status === 'IDEA' && <IdeaStage bundle={bundle} questions={questions} answers={answers} setAnswers={setAnswers} busy={busy === 'intent' || busy === 'intent-auto'} aspectBusy={busy === 'intent-aspect'} onPickAspect={(ar) => void pickAspect(ar)} onAsk={() => void askIntent()} onConfirm={() => void confirmIntent()} />}
-      {/* ---- INTENT：方向选择 ---- */}
-      {(status === 'INTENT' || status === 'PLANNING') && (
+      {/* ---- INTENT：方向选择（构思等待 = 叙事 + 计时，不再裸转圈；故事展开期间隐藏，一次只讲一件事） ---- */}
+      {(status === 'INTENT' || (status === 'PLANNING' && !storyPending)) && (
         <DirectionStage directions={plan.directions} loading={busy === 'directions'} selectedId={plan.concept?.directionId} onSelect={(directionId) => void act('select', `/api/contents/${id}/directions/select`, { directionId }, '方向已锁定')}
-          onRegenerate={() => void act('directions', `/api/contents/${id}/directions`, { regenerate: true })} />
+          onRegenerate={() => void act('directions', `/api/contents/${id}/directions`, { regenerate: true }, '正在重新构思')} />
       )}
 
-      {/* ---- PLANNING/STORY：故事展开 ---- */}
-      {(status === 'PLANNING' || status === 'STORY') && (busy === 'story' || !story) ? (
-        <CenterLoader label="正在展开你的故事…" />
+      {/* ---- PLANNING/STORY：故事展开（Job 化：等待叙事 / 失败重试 / 故事审阅） ---- */}
+      {storyPending ? (
+        planFailed ? (
+          <PlanFailedStage
+            title="故事还没有展开"
+            hint="你的想法和方向都在，随时可以再试。"
+            error={bundle?.lastError?.message ?? job?.error ?? '生成遇到问题'}
+            retryCount={job?.retryCount ?? 0}
+            busy={busy === 'story'}
+            onRetry={() => void act('story', `/api/contents/${id}/story`, undefined, 'AI 编剧再次开工')}
+          />
+        ) : (
+          <PlanWaitingStage wait={STORY_WAIT} startedAt={job?.createdAt} retryCount={job?.retryCount ?? 0} />
+        )
       ) : status === 'STORY' && story ? (
-        <StoryStage story={story} busy={busy === 'storyboard'} onStoryboard={() => void act('storyboard', `/api/contents/${id}/storyboard`, undefined, '分镜已就绪')} />
+        <StoryStage
+          story={story}
+          busy={busy === 'storyboard'}
+          storyboardWaiting={planJobActive || busy === 'storyboard'}
+          startedAt={job?.createdAt}
+          retryCount={job?.retryCount ?? 0}
+          storyboardFailed={planFailed ? (bundle?.lastError?.message ?? job?.error ?? '生成遇到问题') : null}
+          onStoryboard={() => void act('storyboard', `/api/contents/${id}/storyboard`, undefined, '分镜师已开工')}
+          onRetryStoryboard={() => void act('storyboard', `/api/contents/${id}/storyboard`, undefined, '分镜师再次开工')}
+        />
       ) : null}
 
       {/* ---- STORYBOARD：分镜确认 ---- */}
@@ -560,7 +619,7 @@ function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="dark min-h-screen bg-zinc-950 text-zinc-100 selection:bg-fuchsia-500/30">
       <header className="sticky top-0 z-40 border-b border-white/5 bg-zinc-950/80 backdrop-blur-xl">
-        <div className="mx-auto flex h-16 max-w-3xl items-center justify-between px-4 sm:px-6">
+        <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-4 sm:px-6">
           <Link href="/" className="flex items-center gap-2.5">
             <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500 via-fuchsia-500 to-amber-400 shadow-lg shadow-fuchsia-500/25">
               <Sparkles className="size-5 text-white" aria-hidden />
@@ -577,7 +636,9 @@ function Shell({ children }: { children: React.ReactNode }) {
           </nav>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-3xl px-4 py-10 sm:px-6">{children}</main>
+      {/* 2026-10-09 布局自适应：3xl(768px) → 6xl(1152px)，宽屏不再两侧大片留白；
+          各阶段内部用响应式多列消化宽度（分镜 3 列/预览 2 列/场景 2 列） */}
+      <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:py-10">{children}</main>
     </div>
   )
 }
@@ -588,6 +649,150 @@ function CenterLoader({ label }: { label: string }) {
       <Loader2 className="size-8 animate-spin text-fuchsia-400" aria-hidden />
       <div className="text-sm text-zinc-400">{label}</div>
     </div>
+  )
+}
+
+// ---------- 等待叙事（2026-10-09 UX 反馈：「看不到过程会以为卡住了」） ----------
+// 原则：等待必须「有事在发生」——AI 此刻真实在做的事（时间轴轮播）+ 已耗时 + 参考时长。
+// 诚实优先：LLM 单次调用没有真实百分比，绝不伪造进度条；计时锤点优先用服务端
+// job.createdAt（刷新后已耗时不丢），同步等待退化用客户端 busySince。
+
+function useElapsedSeconds(startedAt: string | number | null | undefined): number | null {
+  const [now, setNow] = useState(() => Date.now())
+  const start = typeof startedAt === 'string' ? Date.parse(startedAt) : typeof startedAt === 'number' ? startedAt : null
+  const valid = start != null && !Number.isNaN(start)
+  useEffect(() => {
+    if (!valid) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [valid])
+  if (!valid || start == null) return null
+  return Math.max(0, Math.floor((now - start) / 1000))
+}
+
+function NarrativeProgress({
+  title,
+  hints,
+  expectedLabel,
+  startedAt,
+  retryCount,
+}: {
+  title: string
+  hints: readonly WaitHint[]
+  expectedLabel: string
+  startedAt: string | number | null | undefined
+  retryCount: number
+}) {
+  const elapsed = useElapsedSeconds(startedAt)
+  const hint =
+    elapsed == null
+      ? (hints[0]?.text ?? '')
+      : ([...hints].reverse().find((h) => elapsed >= h.afterSec)?.text ?? hints[0]?.text ?? '')
+  return (
+    <div>
+      <div className="flex items-center gap-3">
+        <div className="relative flex size-10 shrink-0 items-center justify-center">
+          <Loader2 className="size-10 animate-spin text-fuchsia-400/30" aria-hidden />
+          <Wand2 className="absolute size-4 text-fuchsia-300" aria-hidden />
+        </div>
+        <div className="min-w-0">
+          <div className="text-sm font-medium text-zinc-100">{title}</div>
+          <motion.div
+            key={hint}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mt-0.5 truncate text-xs text-zinc-500"
+            title={hint}
+          >
+            {hint}
+          </motion.div>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-zinc-500">
+        {elapsed != null && (
+          <span className="inline-flex items-center gap-1.5 tabular-nums">
+            <Timer className="size-3.5 text-zinc-600" aria-hidden /> {elapsedLabel(elapsed)}
+          </span>
+        )}
+        <span>{expectedLabel}</span>
+        {retryCount > 0 && <span className="text-amber-300/70">遇到点小波折，正在重试（第 {retryCount} 次）——不会丢。</span>}
+      </div>
+    </div>
+  )
+}
+
+/** 规划层等待全宽卡（story.draft Job 进行中：故事展开） */
+function PlanWaitingStage({
+  wait,
+  startedAt,
+  retryCount,
+}: {
+  wait: { title: string; expectedLabel: string; reassurance?: string; hints: readonly WaitHint[] }
+  startedAt?: string
+  retryCount: number
+}) {
+  return (
+    <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+      <Card className="border-white/10 bg-zinc-900/60">
+        <CardContent className="p-6 sm:p-8">
+          <NarrativeProgress title={wait.title} hints={wait.hints} expectedLabel={wait.expectedLabel} startedAt={startedAt} retryCount={retryCount} />
+          {wait.reassurance && <p className="mt-4 text-center text-xs leading-relaxed text-zinc-600">{wait.reassurance}</p>}
+        </CardContent>
+      </Card>
+    </motion.section>
+  )
+}
+
+/** 规划层失败（错误必须可见 + 明确重试入口，不无限转圈） */
+function PlanFailedStage({
+  title,
+  hint,
+  error,
+  retryCount,
+  busy,
+  onRetry,
+}: {
+  title: string
+  hint: string
+  error: string
+  retryCount: number
+  busy: boolean
+  onRetry: () => void
+}) {
+  return (
+    <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      <Card className="border-red-400/25 bg-zinc-900/60">
+        <CardContent className="space-y-4 p-6">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+              <AlertTriangle className="size-5 text-red-300" aria-hidden />
+            </div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold text-zinc-100">{title}</div>
+              <div className="text-xs text-zinc-500">{hint}</div>
+            </div>
+          </div>
+          <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-3">
+            <p className="break-words text-xs leading-relaxed text-zinc-400">
+              <span className="text-zinc-500">原因：</span>
+              {error}
+            </p>
+            {retryCount > 0 && (
+              <p className="mt-1 text-[11px] text-zinc-600">已自动重试 {retryCount} 次仍未成功（多为服务繁忙，稍后再试通常就好）。</p>
+            )}
+          </div>
+          <Button
+            onClick={onRetry}
+            disabled={busy}
+            className="w-full gap-2 bg-gradient-to-r from-fuchsia-500 to-amber-400 font-medium text-zinc-950 hover:from-fuchsia-400 hover:to-amber-300"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RotateCcw className="size-4" aria-hidden />}
+            再试一次
+          </Button>
+        </CardContent>
+      </Card>
+    </motion.section>
   )
 }
 
@@ -736,8 +941,24 @@ function DirectionStage({
   onSelect: (directionId: string) => void
   onRegenerate: () => void
 }) {
-  if (loading || !directions?.length) {
-    return <CenterLoader label="正在为你构思几个创作方向…" />
+  const waiting = loading || !directions?.length
+  // 同步等待的计时锤点：等待分支首次渲染时惰性锚定（ref lazy-init，React 文档认可的模式；
+  // 方向到达即复位，换一批重新计时）。每秒跳动由 useElapsedSeconds 内部 interval 驱动
+  const waitStartRef = useRef<number | null>(null)
+  if (waiting && waitStartRef.current == null) waitStartRef.current = Date.now()
+  if (!waiting) waitStartRef.current = null
+  if (waiting) {
+    // 构思等待：叙事轮播 + 已耗时（同步 LLM 等待也绝不裸转圈）
+    return (
+      <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+        <Card className="border-white/10 bg-zinc-900/60">
+          <CardContent className="p-6 sm:p-8">
+            <NarrativeProgress title={DIRECTIONS_WAIT.title} hints={DIRECTIONS_WAIT.hints} expectedLabel={DIRECTIONS_WAIT.expectedLabel} startedAt={waitStartRef.current} retryCount={0} />
+            <p className="mt-4 text-center text-xs leading-relaxed text-zinc-600">完成后这里会自动出现——不用刷新页面。</p>
+          </CardContent>
+        </Card>
+      </motion.section>
+    )
   }
   return (
     <section className="space-y-4">
@@ -747,7 +968,7 @@ function DirectionStage({
           <Wand2 className="size-3.5" aria-hidden /> 换一批
         </Button>
       </div>
-      <div className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {directions.map((d, i) => (
           <motion.button
             key={d.id}
@@ -789,11 +1010,21 @@ function DirectionStage({
 function StoryStage({
   story,
   busy,
+  storyboardWaiting,
+  startedAt,
+  retryCount,
+  storyboardFailed,
   onStoryboard,
+  onRetryStoryboard,
 }: {
   story: NonNullable<CreationBundle['story']>
   busy: boolean
+  storyboardWaiting: boolean
+  startedAt?: string
+  retryCount: number
+  storyboardFailed: string | null
   onStoryboard: () => void
+  onRetryStoryboard: () => void
 }) {
   return (
     <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="space-y-6">
@@ -826,7 +1057,7 @@ function StoryStage({
         </div>
       ) : null}
 
-      <div className="space-y-3">
+      <div className="grid gap-3 md:grid-cols-2">
         {story.scenes.map((s) => (
           <div key={s.index} className="flex gap-4 rounded-xl border border-white/10 bg-zinc-900/40 p-4">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-zinc-900 text-xs text-zinc-400">{s.index + 1}</span>
@@ -850,7 +1081,7 @@ function StoryStage({
       {story.characters?.length ? (
         <div className="rounded-xl border border-white/10 bg-zinc-900/40 p-4">
           <div className="flex items-center gap-2 text-xs text-zinc-500"><Users className="size-3.5" aria-hidden /> 人物</div>
-          <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {story.characters.map((c) => (
               <div key={c.name} className="rounded-lg border border-white/5 bg-white/[0.02] px-3 py-2">
                 <p className="text-sm text-zinc-200">{c.name}</p>
@@ -863,13 +1094,45 @@ function StoryStage({
         </div>
       ) : null}
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="text-sm text-zinc-500">{story.narrationStyle ? `旁白：${story.narrationStyle}` : '旁白将用第一人称讲述'}</p>
-        <Button size="lg" disabled={busy} onClick={onStoryboard} className="gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-6 text-white shadow-lg shadow-fuchsia-500/25 transition hover:opacity-90 disabled:opacity-50">
-          {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Clapperboard className="size-4" aria-hidden />}
-          {busy ? '正在拆分镜头…' : '拆分镜头'}
-        </Button>
-      </div>
+      {/* 底部动作区：拆分等待（叙事内联，保留故事上下文）/ 失败重试 / 正常按钮 */}
+      {storyboardFailed ? (
+        <div className="rounded-2xl border border-red-400/25 bg-red-500/[0.04] p-5">
+          <div className="flex items-center gap-2 text-sm font-medium text-red-200">
+            <AlertTriangle className="size-4" aria-hidden /> 分镜还没有拆好
+          </div>
+          <p className="mt-1 text-xs leading-relaxed text-zinc-500">
+            原因：{storyboardFailed}。故事内容都在，点「再试一次」重新拆分。
+            {retryCount > 0 && '（已自动重试仍未成功，多为服务繁忙。）'}
+          </p>
+          <Button
+            onClick={onRetryStoryboard}
+            disabled={busy}
+            className="mt-3 gap-2 bg-gradient-to-r from-fuchsia-500 to-amber-400 font-medium text-zinc-950 hover:from-fuchsia-400 hover:to-amber-300"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <RotateCcw className="size-4" aria-hidden />}
+            再试一次
+          </Button>
+        </div>
+      ) : storyboardWaiting ? (
+        <div className="rounded-2xl border border-white/10 bg-zinc-900/40 p-5 sm:p-6">
+          <NarrativeProgress
+            title={STORYBOARD_WAIT.title}
+            hints={STORYBOARD_WAIT.hints}
+            expectedLabel={STORYBOARD_WAIT.expectedLabel}
+            startedAt={startedAt}
+            retryCount={retryCount}
+          />
+          <p className="mt-4 text-center text-xs leading-relaxed text-zinc-600">完成后这里会自动出现分镜——不用刷新页面，可以先回看故事。</p>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-zinc-500">{story.narrationStyle ? `旁白：${story.narrationStyle}` : '旁白将用第一人称讲述'}</p>
+          <Button size="lg" disabled={busy} onClick={onStoryboard} className="gap-2 rounded-xl bg-gradient-to-r from-violet-500 to-fuchsia-500 px-6 text-white shadow-lg shadow-fuchsia-500/25 transition hover:opacity-90 disabled:opacity-50">
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <Clapperboard className="size-4" aria-hidden />}
+            {busy ? '分镜师开工中…' : '拆分镜头'}
+          </Button>
+        </div>
+      )}
     </motion.section>
   )
 }
@@ -891,7 +1154,7 @@ function StoryboardStage({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <p className="text-sm text-zinc-400">{shots.length} 个镜头 · 约 {totalSec} 秒 · 每个镜头一张画面 + 一句旁白</p>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {shots.map((shot, i) => (
           <div key={i} className="flex gap-3.5 rounded-xl border border-white/10 bg-zinc-900/50 p-4">
             <div className="flex size-9 shrink-0 flex-col items-center justify-center rounded-lg border border-white/10 bg-zinc-950 text-[10px] text-zinc-500">
@@ -1022,7 +1285,7 @@ function GeneratingStage({
             </div>
           </div>
           <Progress value={pct} className="h-1.5 bg-zinc-800" />
-          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5 lg:grid-cols-6">
             {shots.map((_, i) => {
               const url = imageByIndex.get(i)
               return (
@@ -1097,7 +1360,7 @@ function ReviewStage({
           </Badge>
         )}
       </div>
-      <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-2">
         {shots.map((shot, i) => (
           <div key={i} className="flex gap-4 overflow-hidden rounded-2xl border border-white/10 bg-zinc-900/50">
             <div className={`relative ${aspectClass} w-28 shrink-0 bg-zinc-950 sm:w-32`}>

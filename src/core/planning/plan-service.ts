@@ -7,6 +7,7 @@ import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
 import { versionRepo } from '@/core/repositories/version-repo'
 import { contentService } from '@/core/content/content-service'
+import { jobService } from '@/core/jobs/job-service'
 import {
   CreativeDirectionSchema,
   type CreativeDirection,
@@ -143,6 +144,47 @@ export const planService = {
       model: 'default',
       payload: { stage: 'storyboard.generate', shots: shotCount },
     })
+  },
+
+  // ---------- 规划层 LLM 异步化（2026-10-09 UX 反馈闭环） ----------
+  // 故事展开/分镜拆解是分钟级 LLM 调用（含 429 冷却重试）。同步 HTTP 会造成：
+  // 前端裸转圈无反馈、fetch 断连后界面僵死（需手动刷新）、刷新即重复入队烧配额。
+  // 改为 Job 入队即返回（§53 绝不长请求挂生成），进度与完成由前端轮询 /creation 接续。
+
+  /** 展开故事（PLANNING）→ 入队 story.draft Job。幂等：已有活跃 Job 直接复用 */
+  async startStoryDraft(contentId: string, actorId: string): Promise<{ jobId: string; alreadyRunning: boolean }> {
+    const content = await contentRepo.findById(db, contentId)
+    if (!content) throw new NotFoundError('作品', contentId)
+    if (content.status !== 'PLANNING') {
+      throw new DomainValidationError('先选定创作方向，再展开故事')
+    }
+    const active = await jobService.activeJobForContent(contentId)
+    if (active) return { jobId: active.id, alreadyRunning: true }
+    const job = await jobService.enqueue({
+      contentId,
+      versionId: content.currentVersionId,
+      type: 'story.draft',
+      payload: { contentId, versionId: content.currentVersionId, actorId },
+    })
+    return { jobId: job.id, alreadyRunning: false }
+  },
+
+  /** 拆分镜头（STORY）→ 入队 storyboard.plan Job。幂等：已有活跃 Job 直接复用 */
+  async startStoryboardPlan(contentId: string, actorId: string): Promise<{ jobId: string; alreadyRunning: boolean }> {
+    const content = await contentRepo.findById(db, contentId)
+    if (!content) throw new NotFoundError('作品', contentId)
+    if (content.status !== 'STORY') {
+      throw new DomainValidationError('先展开故事，再拆分镜头')
+    }
+    const active = await jobService.activeJobForContent(contentId)
+    if (active) return { jobId: active.id, alreadyRunning: true }
+    const job = await jobService.enqueue({
+      contentId,
+      versionId: content.currentVersionId,
+      type: 'storyboard.plan',
+      payload: { contentId, versionId: content.currentVersionId, actorId },
+    })
+    return { jobId: job.id, alreadyRunning: false }
   },
 
   /** 读取工作副本 Story（draftJson 优先，行级数据兜底；无则 null） */

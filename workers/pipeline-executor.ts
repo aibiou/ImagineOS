@@ -1,11 +1,14 @@
 // 生成管线执行器（workers 层 —— 组合式视频管线的编排核心，ADR-0001）
-// 两个 Job 类型：
+// 四个 Job 类型：
+//   story.draft    ：故事展开 LLM（PLANNING→STORY）——规划层异步化（2026-10-09 UX 反馈）
+//   storyboard.plan：分镜拆解 LLM（STORY→STORYBOARD）——同上
 //   video.storyboard：逐镜头图像生成 + 旁白 TTS（GENERATING 阶段）→ 完成后 GENERATING→REVIEW
 //   video.render   ：FFmpeg 合成（RENDERING 阶段）→ 产出 MP4+封面 → RENDERING→READY
 // 铁律：
 //   - 失败绝不丢用户工作：Job failed 时状态机原地不动（§51 失败可恢复）
 //   - 每步进度写 Job.outputJson（前端轮询可见，UX 原则五）
 //   - 资产 hash 去重（重试幂等，T6.1.2）
+//   - 绝不靠长 HTTP 请求维持生成（§53）——规划层 LLM 同样入队，前端轮询接续（刷新不丢、不重复烧配额）
 
 import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
@@ -13,6 +16,9 @@ import { join, resolve } from 'node:path'
 import { router, hasVideoShotProvider } from '@/ai/router/registry'
 import { createCallSerializer } from '@/ai/router/call-serializer'
 import type { ImageSize, ProviderCallContext } from '@/ai/router/types'
+import { generateStoryDraft, generateStoryboard } from '@/ai/planning/story'
+import { intentService } from '@/core/intent/intent-service'
+import { planService } from '@/core/planning/plan-service'
 import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
@@ -94,6 +100,70 @@ async function safeAdvance(contentId: string, to: string, actorId: string | null
     if (content?.status === to) return // 已在目标态（并发推进），幂等跳过
     console.warn(`[pipeline] 状态推进 ${to} 失败（继续执行 Job，不阻塞产物）：${e instanceof Error ? e.message : e}`)
   }
+}
+
+// ---------------- Job: story.draft / storyboard.plan（规划层 LLM 异步化） ----------------
+
+/** 前置校验（与同步路由同一套语义）：状态不匹配时幂等完成而非报错——
+ *  覆盖租约过期重入队后，另一副本已完成推进的并发场景（双写防护）。 */
+async function requireContentInStatus(payload: JobPayload & { jobId: string }, expected: string) {
+  const content = await contentRepo.findById(db, payload.contentId)
+  if (!content) throw new NonRetryableJobError(`作品不存在：${payload.contentId}`)
+  if (content.status !== expected) {
+    await jobService.complete(payload.jobId, { stage: 'skipped', reason: `状态已是 ${content.status}（另一任务已推进）` })
+    return null
+  }
+  return content
+}
+
+export async function executeStoryDraftJob(jobId: string, payload: JobPayload): Promise<void> {
+  const content = await requireContentInStatus({ ...payload, jobId }, 'PLANNING')
+  if (!content) return
+  const record = await intentService.requireRecord(content.id)
+  const concept = await planService.requireConcept(content.id)
+
+  await jobService.reportProgress(jobId, { stage: 'writing', label: '正在展开你的故事…' })
+
+  const story = await generateStoryDraft(record, concept, {
+    contentId: content.id,
+    versionId: content.currentVersionId,
+    purpose: 'story.generate',
+    actorId: payload.actorId,
+  })
+  await planService.saveStoryDraft(content.id, story, payload.actorId ?? 'system')
+
+  await jobService.complete(jobId, {
+    stage: 'done',
+    scenes: story.scenes.length,
+    label: `故事已展开：${story.logline}`,
+  })
+}
+
+export async function executeStoryboardPlanJob(jobId: string, payload: JobPayload): Promise<void> {
+  const content = await requireContentInStatus({ ...payload, jobId }, 'STORY')
+  if (!content) return
+  const record = await intentService.requireRecord(content.id)
+  const concept = await planService.requireConcept(content.id)
+  const workingStory = await planService.getWorkingStory(content.id)
+  if (!workingStory) throw new NonRetryableJobError('故事还没写（先展开故事）')
+
+  await jobService.reportProgress(jobId, { stage: 'planning', label: '正在拆分镜头…' })
+
+  const storyboard = await generateStoryboard(record, concept, workingStory, {
+    contentId: content.id,
+    versionId: content.currentVersionId,
+    purpose: 'storyboard.generate',
+    actorId: payload.actorId,
+  })
+  await planService.saveStoryboard(content.id, storyboard, payload.actorId ?? 'system')
+
+  const shotCount = storyboard.scenes.reduce((n, s) => n + s.shots.length, 0)
+  await jobService.complete(jobId, {
+    stage: 'done',
+    scenes: storyboard.scenes.length,
+    shots: shotCount,
+    label: `分镜已就绪：${storyboard.scenes.length} 个场景 · ${shotCount} 个镜头。`,
+  })
 }
 
 // ---------------- Job: video.storyboard ----------------
@@ -404,6 +474,8 @@ export async function executeRenderJob(jobId: string, payload: JobPayload): Prom
 export async function executeJob(jobId: string, type: string, inputJson: string): Promise<void> {
   const payload = parseJobPayload(inputJson)
   if (!payload.contentId) throw new NonRetryableJobError('Job 缺少 contentId')
+  if (type === 'story.draft') return executeStoryDraftJob(jobId, payload)
+  if (type === 'storyboard.plan') return executeStoryboardPlanJob(jobId, payload)
   if (type === 'video.storyboard') return executeStoryboardJob(jobId, payload)
   if (type === 'video.render') return executeRenderJob(jobId, payload)
   throw new NonRetryableJobError(`未知 Job 类型：${type}`)

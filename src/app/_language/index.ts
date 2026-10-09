@@ -169,3 +169,61 @@ export const WORLD_CONSISTENCY_COPY = {
   locationAnchorLabel: '场景锚点',
   locationAnchorHint: '同一场戏的所有镜头共用这个固定环境',
 } as const
+
+// ---------- 等待叙事（2026-10-09 用户反馈：「一直转圈看不到过程，会以为卡住了」） ----------
+// 原则：等待必须「有事在发生」。时间轴叙事（AI 此刻真实在做的事）+ 已耗时 + 参考时长，
+// 诚实优先——LLM 单次调用没有真实百分比，绝不伪造进度条。
+
+export interface WaitHint {
+  /** 已等待秒数达到该值后切换到这条叙事 */
+  afterSec: number
+  text: string
+}
+
+/** 展开故事的等待叙事（PLANNING → STORY，story.draft Job） */
+export const STORY_WAIT = {
+  title: '正在展开你的故事…',
+  expectedLabel: '这一步通常需要 1–2 分钟',
+  reassurance: '完成后这里会自动出现——不用刷新页面，可以先去干点别的。',
+  hints: [
+    { afterSec: 0, text: '正在体会你选的方向与想表达的情绪' },
+    { afterSec: 12, text: '正在搭建故事的三幕结构：钩子、铺垫、转折、释放' },
+    { afterSec: 30, text: '正在为人物写小传：他们想要什么，又被什么挡住' },
+    { afterSec: 55, text: '正在打磨每个场景的戏剧功能与画面锚点' },
+    { afterSec: 90, text: '快好了——好故事值得这一两分钟' },
+    { afterSec: 150, text: '模型有点繁忙，仍在坚持写——不会丢，可以离开再回来看' },
+  ] as WaitHint[],
+} as const
+
+/** 拆分镜头的等待叙事（STORY → STORYBOARD，storyboard.plan Job） */
+export const STORYBOARD_WAIT = {
+  title: '正在拆分镜头…',
+  expectedLabel: '这一步通常需要 1 分钟左右',
+  hints: [
+    { afterSec: 0, text: '正在按景别语法设计镜头：大远景开场，特写递进情绪' },
+    { afterSec: 12, text: '正在为首 3 秒设计钩子，让观众想看第二眼' },
+    { afterSec: 30, text: '正在写每个镜头的画面提示词与旁白节拍' },
+    { afterSec: 55, text: '正在检查轴线与转场，保证成片剪辑不跳戏' },
+    { afterSec: 90, text: '快好了——分镜是成片的骨架，值得等' },
+    { afterSec: 150, text: '模型有点繁忙，仍在坚持画——不会丢，可以离开再回来看' },
+  ] as WaitHint[],
+} as const
+
+/** 构思方向的等待叙事（INTENT 阶段，同步调用） */
+export const DIRECTIONS_WAIT = {
+  title: '正在为你构思几个创作方向…',
+  expectedLabel: '通常需要半分钟',
+  hints: [
+    { afterSec: 0, text: '正在从你的想法里找三种不同的可能' },
+    { afterSec: 12, text: '正在给每个方向写一句话故事与视觉气质' },
+    { afterSec: 30, text: '模型有点繁忙，再等等就好' },
+  ] as WaitHint[],
+} as const
+
+/** 已耗时 → 「已进行 45 秒 / 已进行 1 分 20 秒」 */
+export function elapsedLabel(sec: number): string {
+  if (sec < 60) return `已进行 ${sec} 秒`
+  const m = Math.floor(sec / 60)
+  const s = sec % 60
+  return s > 0 ? `已进行 ${m} 分 ${s} 秒` : `已进行 ${m} 分钟`
+}
