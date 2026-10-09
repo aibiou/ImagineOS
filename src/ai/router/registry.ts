@@ -319,6 +319,15 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ])
 }
 
+/** 账本输入摘要：提取 payload.prompt（截断 4000 字）——世界一致性注入是否真的发生在调用时刻的直接证据 */
+function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined {
+  if (typeof payload === 'object' && payload !== null && 'prompt' in payload) {
+    const v = (payload as { prompt?: unknown }).prompt
+    if (typeof v === 'string' && v.length > 0) return { prompt: v.length > 4000 ? `${v.slice(0, 4000)}…` : v }
+  }
+  return undefined
+}
+
 // 能力级超时熔断（毫秒）
 const TIMEOUTS: Record<string, number> = {
   'text.plan': 90_000,
@@ -352,6 +361,7 @@ async function runWithRetry<P, R>(
         model: provider.model,
         status: 'succeeded',
         purpose: ctx.purpose,
+        inputSummary: promptSummaryOf(payload),
         latencyMs,
       })
       return result
@@ -367,6 +377,7 @@ async function runWithRetry<P, R>(
         model: provider.model,
         status: 'failed',
         purpose: ctx.purpose,
+        inputSummary: promptSummaryOf(payload),
         error: message,
         latencyMs,
       })

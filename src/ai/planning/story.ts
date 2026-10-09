@@ -51,6 +51,8 @@ const StoryDraftSchema = StorySnapshotSchema.omit({ scenes: true }).extend({
         index: z.number().int().min(0),
         summary: z.string().min(1),
         location: z.string().optional(),
+        /** 场景视觉锚点（英文）：环境+光线+标志性道具的固定描述，同场景所有镜头共用 */
+        locationAnchor: z.string().optional(),
         /** 戏剧功能（五选一，全片按 hook→setup→turn→climax→release 顺序演进） */
         dramaticFunction: z.enum(['hook', 'setup', 'turn', 'climax', 'release']),
         /** 价值转变：观众情绪从 X 到 Y */
@@ -78,17 +80,22 @@ const STORY_SYSTEM = `你是 ImagineOS 的故事编剧，受过严格的影视�
 - 每个人物给出：desire（他想要什么）、obstacle（什么在阻碍他）、arc（结尾比开头多了/少了什么）。
 - visualAnchor（英文，25 词以内）：年龄/体型/发型/服装/标志性道具的固定外貌描述——所有镜头共用同一人物形象，这是观众认人的锚，必须具体到「褪色的蓝衬衫、花白寸头」这种颗粒度。
 
+世界（影视级全面一致性——观众认地方和认人一样重要）：
+- lookBook（英文，≤40词）：全片统一的视觉圣经——色调（如 warm amber tones / cool teal shadows）、光线特质（soft diffused window light / harsh neon）、影调质感（35mm film grain / clean digital）。整部片子只能有一个视觉气质，不许每场戏各自造一套。
+- 每场戏的 locationAnchor（英文，≤35词）：该场景的固定视觉锚点——环境细节+光线状态+标志性道具（如深夜面馆：narrow noodle shop, red plastic stools, steam rising from bamboo baskets, single warm tungsten bulb）。同场景所有镜头共用这一份描述；同一地点反复出现时锚点必须一致。
+
 规则：
 1. logline：一句话故事（≤50字，具体、有画面感，含欲望与阻碍的张力）。
 2. emotionArc：情绪曲线，节拍数 = 场景数，第 i 个节拍对应第 i 场戏的落点情绪。
 3. narrationStyle：旁白风格描述（第一人称/第三人称、口语/诗意，≤20字）。
-4. scenes：每场含 summary（这场戏发生什么，≤40字）、location、dramaticFunction、valueShift（如「平静→不安」）、timeOfDay。
+4. scenes：每场含 summary（这场戏发生什么，≤40字）、location、locationAnchor、dramaticFunction、valueShift（如「平静→不安」）、timeOfDay。
 5. 为普通人写作：具体、真诚，避免空洞形容词；情绪通过动作与细节呈现，不直接报菜名。`
 
 const STORY_JSON_HINT = `{
   "logline": "父亲扶了一夏天后座，只为松手那一下。",
   "narrationStyle": "第一人称，克制的口语",
   "emotionArc": ["轻快", "不安", "决然", "释然"],
+  "lookBook": "Warm nostalgic summer palette, golden hour tones with soft haze, gentle 35mm film grain, tender naturalistic light, quiet observational framing",
   "characters": [
     {
       "name": "父亲",
@@ -107,10 +114,10 @@ const STORY_JSON_HINT = `{
     }
   ],
   "scenes": [
-    { "index": 0, "summary": "夏夜巷口，父亲扶着车后座，我攥着车把不敢蹬", "location": "老巷口", "dramaticFunction": "hook", "valueShift": "平静→忐忑", "timeOfDay": "黄昏" },
-    { "index": 1, "summary": "一圈又一圈，父亲的手一直没松，我越骑越稳", "location": "巷子", "dramaticFunction": "setup", "valueShift": "忐忑→安心", "timeOfDay": "黄昏" },
-    { "index": 2, "summary": "我喊「别松手」，回头才发现父亲早已站在巷口远处", "location": "巷口", "dramaticFunction": "turn", "valueShift": "安心→震动", "timeOfDay": "暮色" },
-    { "index": 3, "summary": "我没有停，一直骑进晚霞里，父亲在原地看", "location": "长街", "dramaticFunction": "release", "valueShift": "震动→释然", "timeOfDay": "晚霞" }
+    { "index": 0, "summary": "夏夜巷口，父亲扶着车后座，我攥着车把不敢蹬", "location": "老巷口", "locationAnchor": "Old residential alley entrance, cracked concrete wall with faded posters, single warm streetlight, parked bicycles, summer evening ambience", "dramaticFunction": "hook", "valueShift": "平静→忐忑", "timeOfDay": "黄昏" },
+    { "index": 1, "summary": "一圈又一圈，父亲的手一直没松，我越骑越稳", "location": "巷子", "locationAnchor": "Narrow back alley between old brick houses, dim amber window light spilling onto uneven pavement, laundry lines overhead, quiet summer night", "dramaticFunction": "setup", "valueShift": "忐忑→安心", "timeOfDay": "黄昏" },
+    { "index": 2, "summary": "我喊「别松手」，回头才发现父亲早已站在巷口远处", "location": "巷口", "locationAnchor": "Old residential alley entrance, cracked concrete wall with faded posters, single warm streetlight, parked bicycles, summer evening ambience", "dramaticFunction": "turn", "valueShift": "安心→震动", "timeOfDay": "暮色" },
+    { "index": 3, "summary": "我没有停，一直骑进晚霞里，父亲在原地看", "location": "长街", "locationAnchor": "Long open residential street stretching toward horizon, silhouetted rooftops, wide glowing sunset sky, distant telephone poles", "dramaticFunction": "release", "valueShift": "震动→释然", "timeOfDay": "晚霞" }
   ]
 }`
 
@@ -123,7 +130,7 @@ export async function generateStoryDraft(
   const userPrompt = `创作意图：主题「${f.topic}」${f.duration ? `，约 ${f.duration} 秒` : ''}${f.emotion?.length ? `，期望情绪 ${f.emotion.join('、')}` : ''}${f.characters?.length ? `，人物：${f.characters.map((c) => `${c.name}(${c.description ?? ''})`).join('、')}` : ''}
 选定创作方向：「${concept.name}」——${concept.oneLiner}${concept.emotion ? `（情绪：${concept.emotion}）` : ''}${concept.visualDirection ? `（视觉：${concept.visualDirection}）` : ''}
 
-请展开故事（三幕微结构 + 人物小传 + 情绪节拍与场景一一对应）。`
+请展开故事（三幕微结构 + 人物小传 + 全片视觉圣经与场景锚点 + 情绪节拍与场景一一对应）。`
 
   const parsed = await completeJson(
     StoryDraftSchema,
@@ -136,10 +143,12 @@ export async function generateStoryDraft(
     narrationStyle: parsed.narrationStyle,
     emotionArc: parsed.emotionArc,
     characters: parsed.characters,
+    lookBook: parsed.lookBook,
     scenes: parsed.scenes.map((s) => ({
       index: s.index,
       summary: s.summary,
       location: s.location,
+      locationAnchor: s.locationAnchor,
       dramaticFunction: s.dramaticFunction,
       valueShift: s.valueShift,
       timeOfDay: s.timeOfDay,
@@ -193,12 +202,14 @@ const STORYBOARD_SYSTEM = `你是 ImagineOS 的分镜师，受过严格的影视
 
 镜头规则：
 1. visualDescription：中文画面描述（给用户看，≤40字，具体到光线/构图/人物动作/景别感受）。
-2. imagePrompt：英文图像生成提示词。包含：主体（含外貌特征）、动作、环境、光线、色调、构图（与 shotSize 一致）、风格词。与 visualDescription 语义一致。不含文字渲染要求（画面中不出现文字）。人物外貌必须与人物表 visualAnchor 一致——系统会自动追加锚点，你写主体时不要另编外貌。
+2. imagePrompt：英文图像生成提示词。包含：主体（含外貌特征）、动作、环境、光线、色调、构图（与 shotSize 一致）、风格词。与 visualDescription 语义一致。不含文字渲染要求（画面中不出现文字）。人物外貌必须与人物表 visualAnchor 一致——系统会自动追加锚点，你写主体时不要另编外貌；环境与光线必须复用该场景的 locationAnchor 与 timeOfDay——系统也会自动注入，你写环境时不要另编一套场地。
 3. shotSize + cameraMotion 组合与情绪配合（回忆涌现→closeup+zoom_in，开阔→wide+pan_right，孤身→extreme_wide+static）。
 4. transition：与下一镜的连接方式——cut（硬切，推进节奏，默认）、dissolve（叠化，时间流逝/进入回忆）、fade（黑场，段落终结，仅结尾可用）。末镜之后无转场可省略。
 5. charactersInShot：本镜出现的人物名字数组（与人物表 name 完全一致；空场景为空数组）。
 6. narrationLine：该镜头的旁白台词（中文口语，≤30字，与画面互补而非重复描述）。节拍规则——第一句必须是钩子（悬念、断言或反常，让观众想听第二句）；最后一句是余韵（回收或留白，不解释满）。相邻镜头台词连起来是完整叙述。
-7. 尽量把镜头按叙事节奏分配到各场景（每场景 1–4 镜）；仅当某一段叙事确实不可拆时才允许单场景超过 4 镜。`
+7. 尽量把镜头按叙事节奏分配到各场景（每场景 1–4 镜）；仅当某一段叙事确实不可拆时才允许单场景超过 4 镜。
+8. 轴线与动作衔接（剪辑不跳戏）：同一场戏内人物的屏幕方向保持一致（面向左的持续面向左，除非剧情给转身理由）；上一镜人物向画面某侧运动，下一镜延续同方向；两镜动作能接得上（出画→入画、抬手→落下），观众才不会迷失。
+9. 全片色调与光线气质遵从故事阶段的 lookBook，不要每镜自创风格。`
 
 const STORYBOARD_JSON_HINT = `{
   "scenes": [
@@ -243,14 +254,13 @@ export async function generateStoryboard(
 - 情绪曲线：${story.emotionArc?.join(' → ') ?? '未定'}
 - 旁白风格：${story.narrationStyle ?? '第一人称，真诚口语'}
 - 人物表（name 必须与 charactersInShot 对齐；imagePrompt 的主体外貌遵循 visualAnchor）：${characterBrief || '无人物表'}
-- 场景（戏剧功能 → 镜头要服务它）：
-${story.scenes.map((s) => `  ${s.index}. ${s.summary}${s.location ? `（${s.location}${s.timeOfDay ? '·' + s.timeOfDay : ''}）` : ''}${s.dramaticFunction ? `［${s.dramaticFunction}${s.valueShift ? '：' + s.valueShift : ''}］` : ''}`).join('\n')}
-
-创作方向：「${concept.name}」${concept.visualDirection ? `视觉：${concept.visualDirection}` : ''}
+- 场景（戏剧功能 → 镜头要服务它；imagePrompt 的环境与光线遵循各场 locationAnchor 与 timeOfDay）：
+${story.scenes.map((s) => `  ${s.index}. ${s.summary}${s.location ? `（${s.location}${s.timeOfDay ? '·' + s.timeOfDay : ''}）` : ''}${s.locationAnchor ? `〔锚点：${s.locationAnchor}〕` : ''}${s.dramaticFunction ? `［${s.dramaticFunction}${s.valueShift ? '：' + s.valueShift : ''}］` : ''}`).join('\n')}
+${story.lookBook ? `- 全片视觉圣经（所有镜头的色调与光线气质基准）：${story.lookBook}\n` : ''}创作方向：「${concept.name}」${concept.visualDirection ? `视觉：${concept.visualDirection}` : ''}
 视觉风格基底：${f.visual_style ?? 'cinematic_realism'}
 总时长目标：约 ${targetSec} 秒，全片约 ${shotCount} 个镜头。
 
-请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述）。`
+请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述、同场戏环境光线一致、轴线不跳）。`
 
   const parsed = await completeJson(
     StoryboardSchema,
@@ -278,6 +288,7 @@ ${story.scenes.map((s) => `  ${s.index}. ${s.summary}${s.location ? `（${s.loca
       index: sc.index,
       summary: original?.summary,
       location: original?.location,
+      locationAnchor: original?.locationAnchor,
       dramaticFunction: original?.dramaticFunction,
       valueShift: original?.valueShift,
       timeOfDay: original?.timeOfDay,

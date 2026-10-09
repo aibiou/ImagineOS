@@ -103,6 +103,8 @@ export const SceneSnapshotSchema = z.object({
   index: z.number().int().min(0),
   summary: z.string().optional(),
   location: z.string().optional(),
+  /** 场景视觉锚点（英文，≤35词）：环境细节+光线状态+标志性道具——同场景所有镜头共用的固定世界观，执行层注入每个 imagePrompt */
+  locationAnchor: z.string().optional(),
   /** 戏剧功能：这场戏为什么存在（hook/setup/turn/climax/release） */
   dramaticFunction: z.enum(SCENE_FUNCTIONS).optional(),
   /** 价值转变：观众情绪从 X 到 Y（「平静→好奇」；无转变的场戏应被删掉） */
@@ -119,6 +121,8 @@ export const StorySnapshotSchema = z.object({
   emotionArc: z.array(z.string()).optional(), // 情绪曲线（节拍数应与场景数对应）
   /** 人物小传（故事阶段产出；密封进版本后供执行层注入视觉锚点） */
   characters: z.array(CharacterSheetSchema).optional(),
+  /** 全片视觉圣经 lookBook（英文，≤40词）：色调+光线特质+影调质感——整部片子一个视觉气质，执行层注入每个 imagePrompt */
+  lookBook: z.string().optional(),
   scenes: z.array(SceneSnapshotSchema).default([]),
 })
 export type StorySnapshot = z.infer<typeof StorySnapshotSchema>

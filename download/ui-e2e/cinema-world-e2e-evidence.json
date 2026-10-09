@@ -1,0 +1,288 @@
+{
+  "verifiedAt": "2026-10-09T01:52:22.172Z",
+  "task": "世界一致性升级 E2E（lookBook/locationAnchor/时段光线/账本注入证据/loudnorm）",
+  "expression": "深夜快打烊的面馆，老板每次都会给晚归的加班女孩留最后一碗热汤面，今晚女孩没有来",
+  "contentId": "cmv0aniha0003prprrqbivo97",
+  "story": {
+    "logline": "深夜加班，她赶到面馆，只剩一碗温着的面和一张辞职条。",
+    "lookBook": "Cool teal night palette pierced by warm amber pools, shallow depth of field, backlit steam, soft halation around bulbs, gentle 35mm film grain, quiet intimate framing, tender contrast of cold and warm light",
+    "emotionArc": [
+      "悬念",
+      "渴望",
+      "震动",
+      "酸暖",
+      "怅惘"
+    ],
+    "characters": [
+      {
+        "name": "老板",
+        "visualAnchor": "A sturdy Chinese man in his 50s, balding with gray temples, stained white chef tunic, thick forearms, kind tired eyes"
+      },
+      {
+        "name": "女孩",
+        "visualAnchor": "A Chinese woman in her late 20s, shoulder-length hair in a loose tie, wrinkled pale blue office shirt, wire-rimmed glasses, worn tote bag"
+      }
+    ],
+    "scenes": [
+      {
+        "index": 0,
+        "summary": "深夜，熄了火的厨房，一碗面在黑暗里冒着热气",
+        "location": "面馆厨房",
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜",
+        "dramaticFunction": "hook",
+        "valueShift": "寂静→悬念"
+      },
+      {
+        "index": 1,
+        "summary": "办公室，女孩加班到深夜，胃里空着，只盼那碗热汤面",
+        "location": "深夜办公室",
+        "locationAnchor": "Open-plan office at night, rows of dark desks, cold blue monitor glow, flickering fluorescent tube, empty coffee machine, dust in the light",
+        "timeOfDay": "午夜",
+        "dramaticFunction": "setup",
+        "valueShift": "疲惫→渴望"
+      },
+      {
+        "index": 2,
+        "summary": "她赶到面馆，店门虚掩，灶上温着面，灶边压着一张辞职条",
+        "location": "面馆店堂",
+        "locationAnchor": "Noodle shop dining room, red plastic stools, bamboo steamer baskets, single dim tungsten bulb, handwritten resignation note under a porcelain bowl",
+        "timeOfDay": "深夜",
+        "dramaticFunction": "turn",
+        "valueShift": "期待→震动"
+      },
+      {
+        "index": 3,
+        "summary": "她挑起面喝完汤，眼泪落进空碗，暖意和空缺同时抵达",
+        "location": "面馆厨房",
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜",
+        "dramaticFunction": "climax",
+        "valueShift": "震动→酸暖"
+      },
+      {
+        "index": 4,
+        "summary": "她端着空碗走进晨光，店灯在身后一盏盏熄灭",
+        "location": "店门口长街",
+        "locationAnchor": "Narrow street at dawn, pale blue sky, noodle shop door glowing faint amber, empty stool outside, wet pavement, distant bus light",
+        "timeOfDay": "黎明",
+        "dramaticFunction": "release",
+        "valueShift": "酸暖→怅惘"
+      }
+    ]
+  },
+  "storyboard": {
+    "shotCount": 5,
+    "sizeProgression": [
+      "extreme_wide",
+      "medium",
+      "wide",
+      "extreme_closeup",
+      "extreme_wide"
+    ],
+    "scenes": [
+      {
+        "index": 0,
+        "shots": 1,
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 1,
+        "shots": 1,
+        "locationAnchor": "Open-plan office at night, rows of dark desks, cold blue monitor glow, flickering fluorescent tube, empty coffee machine, dust in the light",
+        "timeOfDay": "午夜"
+      },
+      {
+        "index": 2,
+        "shots": 1,
+        "locationAnchor": "Noodle shop dining room, red plastic stools, bamboo steamer baskets, single dim tungsten bulb, handwritten resignation note under a porcelain bowl",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 3,
+        "shots": 1,
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜"
+      },
+      {
+        "index": 4,
+        "shots": 1,
+        "locationAnchor": "Narrow street at dawn, pale blue sky, noodle shop door glowing faint amber, empty stool outside, wet pavement, distant bus light",
+        "timeOfDay": "黎明"
+      }
+    ]
+  },
+  "sealedStructure": {
+    "lookBookSealed": "Cool teal night palette pierced by warm amber pools, shallow depth of field, backlit steam, soft halation around bulbs, gentle 35mm film grain, quiet intimate framing, tender contrast of cold and warm light",
+    "scenes": [
+      {
+        "index": 0,
+        "location": "面馆厨房",
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜",
+        "shots": 1
+      },
+      {
+        "index": 1,
+        "location": "深夜办公室",
+        "locationAnchor": "Open-plan office at night, rows of dark desks, cold blue monitor glow, flickering fluorescent tube, empty coffee machine, dust in the light",
+        "timeOfDay": "午夜",
+        "shots": 1
+      },
+      {
+        "index": 2,
+        "location": "面馆店堂",
+        "locationAnchor": "Noodle shop dining room, red plastic stools, bamboo steamer baskets, single dim tungsten bulb, handwritten resignation note under a porcelain bowl",
+        "timeOfDay": "深夜",
+        "shots": 1
+      },
+      {
+        "index": 3,
+        "location": "面馆厨房",
+        "locationAnchor": "Small noodle shop kitchen, dark except one warm tungsten bulb, porcelain bowl steaming on wooden counter, copper pots, cold shadows beyond the light",
+        "timeOfDay": "深夜",
+        "shots": 1
+      },
+      {
+        "index": 4,
+        "location": "店门口长街",
+        "locationAnchor": "Narrow street at dawn, pale blue sky, noodle shop door glowing faint amber, empty stool outside, wet pavement, distant bus light",
+        "timeOfDay": "黎明",
+        "shots": 1
+      }
+    ]
+  },
+  "ledgerInjection": {
+    "imageSucceeded": 5,
+    "imageInjection": [
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": false
+      },
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": true
+      },
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": true
+      },
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": true
+      },
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": true
+      }
+    ],
+    "imageAllInjected": true,
+    "videoSucceeded": 2,
+    "videoInjection": [
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": false
+      },
+      {
+        "promptRecorded": true,
+        "hasLookBook": true,
+        "hasLocationAnchor": true,
+        "hasLighting": true,
+        "hasCharacterAnchor": true
+      }
+    ],
+    "sceneAnchorConsistency": [
+      {
+        "sceneIndex": 0,
+        "shots": 1,
+        "hasAnchor": true,
+        "anchorHitCount": 2
+      },
+      {
+        "sceneIndex": 1,
+        "shots": 1,
+        "hasAnchor": true,
+        "anchorHitCount": 1
+      },
+      {
+        "sceneIndex": 2,
+        "shots": 1,
+        "hasAnchor": true,
+        "anchorHitCount": 1
+      },
+      {
+        "sceneIndex": 3,
+        "shots": 1,
+        "hasAnchor": true,
+        "anchorHitCount": 2
+      },
+      {
+        "sceneIndex": 4,
+        "shots": 1,
+        "hasAnchor": true,
+        "anchorHitCount": 1
+      }
+    ]
+  },
+  "generationLedger": {
+    "totalCalls": 32,
+    "succeeded": 17,
+    "failed": 15,
+    "byProvider": {
+      "text.plan @ openai-compat:ant-ling·Ling-3.1-flash": 5,
+      "image.shot @ openai-compat:agnes-com·agnes-image-2.5-flash": 5,
+      "video.shot @ openai-compat:agnes-com·agnes-video-2.5-flash": 5,
+      "video.shot @ zai-video": 11,
+      "audio.tts @ zai-tts": 6
+    }
+  },
+  "final": {
+    "url": "/api/assets/cmv0b8kqw004tprprcrlznrhl",
+    "durationMs": 42600
+  },
+  "ffprobe": {
+    "programs": [],
+    "stream_groups": [],
+    "streams": [
+      {
+        "codec_name": "h264",
+        "codec_type": "video"
+      },
+      {
+        "codec_name": "aac",
+        "codec_type": "audio",
+        "sample_rate": "44100"
+      }
+    ],
+    "format": {
+      "duration": "42.600000"
+    }
+  },
+  "review": {
+    "status": "REVIEW",
+    "generationMode": {
+      "mode": "hybrid",
+      "nativeShots": 2,
+      "totalShots": 5
+    }
+  }
+}

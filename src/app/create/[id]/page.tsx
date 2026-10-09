@@ -19,6 +19,7 @@ import {
   History,
   Images,
   Link2,
+  Palette,
   Check,
   Loader2,
   MessageCircleQuestion,
@@ -39,7 +40,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
+import { CAMERA_LABEL, COPY, CREATE_STEPS, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, generationModeLabel, versionLabel, versionWithCount } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -58,7 +59,7 @@ interface CreationBundle {
   }
   intent: { rawExpression: string; record: { fields: Record<string, unknown>; sources: Record<string, string>; interview?: { asked: string[]; remainingBudget: number; done: boolean } } | null } | null
   plan: { directions: Array<{ id: string; name: string; oneLiner: string; emotion?: string; visualDirection?: string; expectedDurationSec?: number }> | null; concept: { directionId?: string; name?: string; oneLiner?: string; emotion?: string; visualDirection?: string } | null }
-  story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; characters?: Array<{ name: string; desire?: string; obstacle?: string; arc?: string }>; scenes: Array<{ index: number; summary?: string; location?: string; dramaticFunction?: string; valueShift?: string; timeOfDay?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; shotSize?: string; transition?: string; charactersInShot?: string[]; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
+  story: { logline?: string; narrationStyle?: string; emotionArc?: string[]; lookBook?: string; characters?: Array<{ name: string; desire?: string; obstacle?: string; arc?: string }>; scenes: Array<{ index: number; summary?: string; location?: string; locationAnchor?: string; dramaticFunction?: string; valueShift?: string; timeOfDay?: string; shots: Array<{ index: number; visualDescription?: string; cameraMotion?: string; shotSize?: string; transition?: string; charactersInShot?: string[]; durationMs?: number; narrationLine?: string; emotion?: string }> }> } | null
   version: { number: number; changelog: string | null; createdAt: string } | null
   job: { id: string; type: string; status: string; retryCount: number; stage?: string; label?: string; current?: number; total?: number; progress?: number; error?: string | null; failedAt?: string } | null
   lastError: { code: string; message: string; at: string; jobId: string | null } | null
@@ -739,11 +740,19 @@ function StoryStage({
         </CardContent>
       </Card>
 
+      {story.lookBook ? (
+        <div className="rounded-xl border border-amber-500/20 bg-amber-500/[0.04] p-4">
+          <div className="flex items-center gap-2 text-xs text-amber-300/80"><Palette className="size-3.5" aria-hidden /> {WORLD_CONSISTENCY_COPY.lookBookLabel}</div>
+          <p className="mt-2 text-sm leading-relaxed text-zinc-300">{story.lookBook}</p>
+          <p className="mt-1 text-xs text-zinc-600">{WORLD_CONSISTENCY_COPY.lookBookHint}</p>
+        </div>
+      ) : null}
+
       <div className="space-y-3">
         {story.scenes.map((s) => (
           <div key={s.index} className="flex gap-4 rounded-xl border border-white/10 bg-zinc-900/40 p-4">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/10 bg-zinc-900 text-xs text-zinc-400">{s.index + 1}</span>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-sm leading-relaxed text-zinc-200">{s.summary}</p>
               <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-zinc-500">
                 {s.location && <span>场景：{s.location}{s.timeOfDay ? ` · ${s.timeOfDay}` : ''}</span>}
@@ -752,6 +761,9 @@ function StoryStage({
                 )}
                 {s.valueShift && <span className="text-zinc-400">情绪 {s.valueShift}</span>}
               </div>
+              {s.locationAnchor ? (
+                <p className="mt-1.5 truncate text-xs text-zinc-600" title={s.locationAnchor}>{WORLD_CONSISTENCY_COPY.locationAnchorLabel}：{s.locationAnchor}</p>
+              ) : null}
             </div>
           </div>
         ))}

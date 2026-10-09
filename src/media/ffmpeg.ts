@@ -365,15 +365,16 @@ export async function composeVideo(spec: ComposeSpec): Promise<ComposeResult> {
         audioFilters.push(`[bgmvol][narrmix]sidechaincompress=threshold=0.02:ratio=6:attack=80:release=400[bgmduck]`)
         audioFilters.push(`[bgmduck][narrmix]amix=inputs=2:normalize=0:duration=first[bgmplus]`)
         // duration=first：以 BGM（循环无限）为准 → 再 atrim 到视频总长
-        audioFilters.push(`[bgmplus]atrim=0:${totalSec.toFixed(3)},apad=whole_dur=${totalSec.toFixed(3)}[aout]`)
+        // loudnorm：全片统一响度（EBU R128 流媒体标准 I=-16LUFS）——跨镜旁白音量一致性由代码保证
+        audioFilters.push(`[bgmplus]atrim=0:${totalSec.toFixed(3)},apad=whole_dur=${totalSec.toFixed(3)},loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[aout]`)
       } else {
-        audioFilters.push(`[narrmix]apad=whole_dur=${totalSec.toFixed(3)}[aout]`)
+        audioFilters.push(`[narrmix]apad=whole_dur=${totalSec.toFixed(3)},loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[aout]`)
       }
       audioOut = '[aout]'
       mixLabels.push('[aout]')
     } else if (bgmInputIndex >= 0) {
       // 仅 BGM
-      audioFilters.push(`[${bgmInputIndex}:a]volume=${spec.bgm!.volume},atrim=0:${totalSec.toFixed(3)},apad=whole_dur=${totalSec.toFixed(3)}[aout]`)
+      audioFilters.push(`[${bgmInputIndex}:a]volume=${spec.bgm!.volume},atrim=0:${totalSec.toFixed(3)},apad=whole_dur=${totalSec.toFixed(3)},loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100[aout]`)
       audioOut = '[aout]'
     }
   }

@@ -1,6 +1,7 @@
 // 影视专业性逻辑回归测试（cinema-professional-logic）
 // 2026-10-08 业务升级：三幕微结构 / 人物小传（欲望-障碍-弧光）/ 景别语法 / 人物视觉锚点代码注入。
-// 锚点注入是本升级的核心承诺：跨镜人物一致性从「prompt 规则祈祷」升级为「执行层代码保证」。
+// 2026-10-09 全面一致性升级：全片视觉圣经 lookBook / 场景视觉锚点 locationAnchor / 时段光线连续性注入。
+// 锚点注入是本升级的核心承诺：跨镜人物与世界一致性从「prompt 规则祈祷」升级为「执行层代码保证」。
 import { describe, expect, it } from 'vitest'
 import {
   CharacterSheetSchema,
@@ -12,7 +13,7 @@ import {
   type ShotSnapshot,
   type VersionStructure,
 } from '@/core/content/schemas'
-import { charactersForShot, imagePromptFor, videoPromptFor } from '@/core/content/shot-prompt'
+import { charactersForShot, imagePromptFor, lightingPhraseFor, sceneOfShot, videoPromptFor } from '@/core/content/shot-prompt'
 import { reconcileShotDurations } from '@/ai/planning/story'
 
 const character = {
@@ -153,5 +154,106 @@ describe('时长预算归一（原有行为回归）', () => {
     const out = reconcileShotDurations(shots, 45) // 总 12s vs 目标 45s
     expect(out.every((s) => s.durationMs === 12000)).toBe(true)
     expect(reconcileShotDurations(shots, 12)).toEqual(shots) // 容差内零调整
+  })
+})
+
+// ---------- 世界一致性（2026-10-09 全面一致性升级） ----------
+
+const alleyAnchor = 'Old residential alley entrance, cracked concrete wall with faded posters, single warm streetlight, parked bicycles'
+const longStreetAnchor = 'Long open residential street stretching toward horizon, silhouetted rooftops, wide glowing sunset sky'
+const LOOK_BOOK = 'Warm nostalgic summer palette, golden hour tones with soft haze, gentle 35mm film grain'
+
+/** 双场景 + lookBook 的世界一致性结构（Zod parse 克隆 → 走结构兜底解析，同时验证该路径） */
+const worldStructure = (over: { story?: VersionStructure['story'] } = {}): VersionStructure =>
+  structure({
+    story: {
+      logline: '父亲扶了一夏天后座，只为松手那一下。',
+      lookBook: LOOK_BOOK,
+      characters: [character],
+      scenes: [
+        { index: 0, summary: '巷口学车', location: '老巷口', locationAnchor: alleyAnchor, timeOfDay: '黄昏', shots: [shot()] },
+        { index: 1, summary: '骑进晚霞', location: '长街', locationAnchor: longStreetAnchor, timeOfDay: '晚霞', shots: [shot({ index: 0, imagePrompt: 'The boy pedaling away down a long street into the sunset glow', durationMs: 9000 })] },
+      ],
+    },
+    ...over,
+  })
+
+describe('shot-prompt：世界一致性代码注入（全片一个世界观）', () => {
+  it('lookBook 注入每个 imagePrompt / videoPrompt（一部片子一个视觉气质）', () => {
+    const s = worldStructure()
+    const img = imagePromptFor(s.story!.scenes[0]!.shots[0]!, s)
+    expect(img).toContain(`Film look (whole film): ${LOOK_BOOK}`)
+    const vid = videoPromptFor(s.story!.scenes[0]!.shots[0]!, s)
+    expect(vid).toContain(`Film look (whole film): ${LOOK_BOOK}`)
+  })
+
+  it('场景锚点 + 时段光线注入：同场景所有镜头共用同一环境', () => {
+    const s = worldStructure()
+    const img = imagePromptFor(s.story!.scenes[0]!.shots[0]!, s)
+    expect(img).toContain(`Scene (keep environment consistent): ${alleyAnchor}`)
+    expect(img).toContain('Lighting: golden hour dusk light')
+  })
+
+  it('多场景各自正确解析：长街场景用长街锚点与晚霞光线（结构兜底消歧）', () => {
+    const s = worldStructure()
+    const streetShot = s.story!.scenes[1]!.shots[0]!
+    const img = imagePromptFor(streetShot, s)
+    expect(img).toContain(longStreetAnchor)
+    expect(img).toContain('vivid sunset afterglow')
+    expect(img).not.toContain(alleyAnchor)
+  })
+
+  it('videoPromptFor 同样注入世界片段（运动中环境不漂移）', () => {
+    const s = worldStructure()
+    const vid = videoPromptFor(s.story!.scenes[1]!.shots[0]!, s)
+    expect(vid).toContain(longStreetAnchor)
+    expect(vid).toContain('Film look (whole film)')
+  })
+
+  it('旧配方（无 lookBook/锚点/时刻）→ 零世界注入零报错（存量版本密封件向后兼容）', () => {
+    const s = structure({
+      story: { logline: '旧配方', characters: [character], scenes: [{ index: 0, summary: 'x', shots: [shot()] }] },
+    })
+    const img = imagePromptFor(s.story!.scenes[0]!.shots[0]!, s)
+    expect(img).not.toContain('Film look')
+    expect(img).not.toContain('keep environment consistent')
+    expect(img).not.toContain('Lighting:')
+    expect(img).toContain('Visual style') // 原有行为保留
+  })
+
+  it('镜头不在任何场景（孤镜）→ 零世界注入不抛错', () => {
+    const s = worldStructure()
+    const orphan = shot({ index: 7, imagePrompt: 'A lone bicycle silhouette under streetlight', durationMs: 5000 })
+    const img = imagePromptFor(orphan, s)
+    expect(img).toContain('Film look (whole film)') // lookBook 仍注入（全片级）
+    expect(img).not.toContain('keep environment consistent') // 场景级零注入
+  })
+
+  it('sceneOfShot：引用匹配优先（执行器同对象图路径）', () => {
+    const s = worldStructure()
+    const ref = s.story!.scenes[1]!.shots[0]!
+    expect(sceneOfShot(ref, s)?.index).toBe(1)
+  })
+
+  it('lightingPhraseFor：中文时段映射表（黄昏/深夜/清晨/正午/晚霞）；未匹配返回空', () => {
+    expect(lightingPhraseFor('黄昏')).toContain('golden hour dusk light')
+    expect(lightingPhraseFor('暮色')).toContain('golden hour')
+    expect(lightingPhraseFor('深夜')).toContain('deep night')
+    expect(lightingPhraseFor('夜晚')).toContain('night scene')
+    expect(lightingPhraseFor('清晨')).toContain('dawn')
+    expect(lightingPhraseFor('正午')).toContain('midday')
+    expect(lightingPhraseFor('晚霞')).toContain('sunset afterglow')
+    expect(lightingPhraseFor('魔法时刻')).toBe('')
+    expect(lightingPhraseFor(undefined)).toBe('')
+    expect(lightingPhraseFor('  ')).toBe('')
+  })
+
+  it('Schema：lookBook / locationAnchor 可解析；非法类型被拒（防脏数据入库）', () => {
+    const story = StorySnapshotSchema.parse({ logline: 'x', lookBook: LOOK_BOOK, scenes: [] })
+    expect(story.lookBook).toBe(LOOK_BOOK)
+    const scene = SceneSnapshotSchema.parse({ index: 0, locationAnchor: alleyAnchor, shots: [] })
+    expect(scene.locationAnchor).toBe(alleyAnchor)
+    expect(() => StorySnapshotSchema.parse({ lookBook: 123 })).toThrow()
+    expect(() => SceneSnapshotSchema.parse({ index: 0, locationAnchor: [] })).toThrow()
   })
 })

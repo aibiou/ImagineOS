@@ -144,3 +144,11 @@ export const SCENE_FUNCTION_LABEL: Record<string, string> = {
   climax: '高潮',
   release: '落点',
 }
+
+/** 世界一致性（影视全面一致性升级）：用户语言标签 */
+export const WORLD_CONSISTENCY_COPY = {
+  lookBookLabel: '全片视觉基调',
+  lookBookHint: '整部片子共用这一套色调与光线气质',
+  locationAnchorLabel: '场景锚点',
+  locationAnchorHint: '同一场戏的所有镜头共用这个固定环境',
+} as const

@@ -740,3 +740,30 @@ Work Log:
 Stage Summary:
 - 全流程达成度结论（详见对用户汇报）：工程可用性三层闭合 + 影视专业性五层闭合均有实证；已知边界=agnes video RPM=1 限制 native 占比、Ling 免费窗口约 10-22 到期
 - 阻塞待用户：新 GitHub token（9 commit 积压待推）
+
+---
+Task ID: cinema-consistency-020
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人问「影视专业性做到影视层面的全面一致性了吗？没有就设定目标持续优化」+ 持续优化到产品级——世界/声音/剪辑三层一致性升级
+
+Work Log:
+- 推送核销：新 token 推送 b316ce9 后 origin/main 完全同步；核实远程 HEAD 发现 018 的推送实际已成功（上轮「假成功」判断有误——URL 直推不更新本地跟踪 ref 所致，ls-remote 用失效旧 token 验证造成误判），已在本条目更正
+- 诚实评估结论：未达全面一致性——人物一致性已代码保证（018），但①场景/空间无锚点（location 只是中文名）②全片无视觉圣经（style 只有一句基底）③timeOfDay 在 schema 但从未注入图像提示词 ④旁白响度无归一 ⑤轴线/动作衔接未教
+- 勘察纠错：曾误判 imagePromptFor/videoPromptFor 为死代码——实为 workers/pipeline-executor.ts（项目根 workers/ 目录，src 域搜索漏之）调用，人物锚点注入一直是活的
+- T1 世界一致性（本轮核心）：StorySnapshot+lookBook（全片视觉圣经）+ SceneSnapshot+locationAnchor（场景视觉锚点）全 optional 向后兼容；story prompt 教学生成（JSON hint 示例+同地点复现锚点必须一致规则）；storyboard prompt 增环境光线复用规则；shot-prompt.ts 执行层注入——lookBookFragment（每镜）+ worldFragment（场景锚点+时段光线）+ sceneOfShot（引用匹配优先+index/imagePrompt/durationMs 结构兜底，兼容 Zod 克隆）+ TIME_OF_DAY_LIGHTING 中文时段→英文光线短语映射（10 组）
+- T3 剪辑一致性：分镜 prompt 规则 8（180°轴线：同场人物屏幕方向一致/运动方向延续/出画入画衔接）+ 规则 9（全片色调遵从 lookBook）
+- T2 声音一致性：ffmpeg 音频链三处接 loudnorm=I=-16:TP=-1.5:LRA=11,aresample=44100（EBU R128 流媒体标准——跨镜旁白响度归一代码保证）
+- 观测性增强：registry.runWithRetry 成功/失败两侧落 promptSummaryOf(payload)（截断 4000 字）——世界一致性注入是否真实发生在调用时刻，从此有账本直接证据
+- UI：语言字典 WORLD_CONSISTENCY_COPY；StoryStage 增全片视觉基调卡（琥珀色 Palette 图标）+ 场景卡增锚点行（truncate+title 悬停全文）
+- 测试：cinema-professional-logic.test.ts +9（lookBook 注入图/视频、场景锚点+光线注入、多场景消歧、旧配方零注入向后兼容、孤镜零场景注入、sceneOfShot 引用路径、时段映射表、schema 校验拒脏值）→ 全量 158/158；tsc 0 错误；eslint 0 错误
+- 环境坑：dev server 重启三连死（bash -c 管道包装被会话回收，setsid 也无效）——用 scripts/m15/restart-dev.sh 已验证存活模式（直接 nohup 二进制+init 接管）解决
+- 真实管线 E2E（面馆故事，断点续跑两段）：story 产出 lookBook「Cool teal night palette pierced by warm amber pools…35mm film grain」+ 5 场全有锚点，且场0/场3 同为面馆厨房锚点逐字一致（跨场景同地点复现——prompt 规则真实兑现）；Generation 账本 5 image+2 video 全部含 Film look+Scene+Lighting 注入（代码保证真实流量直接证据）；成片 43s h264+aac44100（loudnorm 链无错）；hybrid native 2/5（agnes RPM=1+zai 兜底，已知供给边界）；Ling 5/5 LLM；帧抽取 3 张；断言 6/6 全过；清场 DELETE 200
+- VLM 三帧跨场景盲评（glm 视觉模型）：色调一致性✓✓（「统一 Teal & Orange 电影级调色…颗粒感完全一致」——lookBook 逐词兑现）；光线逻辑✓（全人工光源深夜自洽）；人物一致性✓（跨帧同女性：同眼镜同浅蓝衬衫同帆布包）；环境细节✓（铜锅氧化色泽/青花瓷碗/钨丝灯/蒸汽——locationAnchor 逐词落画）
+- UI 浏览器验证（花店故事，1440×900）：全片视觉基调卡渲染✓（Cool dawn palette…documentary realism）+ 5 场锚点行全显示（场1-4 同花店逐字一致）+ 时段标签连续（黎明前→清晨→日出）；console 零错误；截图 cinema-world-story-stage.png；清场 DELETE 200；平台仅剩用户自己的 IDEA 内容
+- E2E 驱动/盲评脚本入库：scripts/m15/cinema-world-e2e.mjs + vlm-world-review.mjs（后者踩坑一次：chat.completions.create 不收 image_url，须用 createVision）
+
+Stage Summary:
+- 全面一致性三层闭环：世界（lookBook/场景锚点/时段光线——prompt 生产+执行层代码注入+账本证据+VLM 盲评）+ 声音（loudnorm 响度归一）+ 剪辑（轴线/动作衔接 prompt 规则）
+- 一致性证据链范式成型：单测（158）→ 账本 prompt 直接证据 → VLM 独立盲评，三层互证
+- 人物一致性（018）+ 世界一致性（020）合并：影视层面全面一致性的代码基座齐备
+- 剩余目标（下阶段）：BGM 自动配乐（ffmpeg 闪避已就绪，欠音乐生成源——供给侧依赖）；多画幅（当前固定 9:16）；修订定位器吸收 lookBook/locationAnchor 语义（「色调再暖一点」应落到 lookBook 层）；native 占比仍受 agnes RPM=1 供给约束
