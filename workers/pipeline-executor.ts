@@ -17,6 +17,8 @@ import { router, hasVideoShotProvider } from '@/ai/router/registry'
 import { createPacedVideoScheduler } from '@/ai/router/video-pacer'
 import type { ImageSize, ProviderCallContext, VideoShotResult } from '@/ai/router/types'
 import { generateStoryDraft, generateStoryboard } from '@/ai/planning/story'
+import { generateDirections } from '@/ai/planning/directions'
+import { planRevision } from '@/ai/revision/locator'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
 import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
@@ -55,6 +57,8 @@ interface JobPayload {
    *  执行器将从同版本最近一次失败/超时的 storyboard Job 进度中打捞已完成镜头（只补缺口，不重烧）。
    *  REVIEW/READY 的「换一批」 regenerate 不携带此标记（语义 = 全新批次，用户主动要求重画）。 */
   resumeFromFailed?: boolean
+  /** 修订定位（025 战线二，计算型 Job）：用户反馈原文——结果存 outputJson，不推进状态机 */
+  feedback?: string
 }
 
 function parseJobPayload(inputJson: string): JobPayload {
@@ -69,6 +73,7 @@ function parseJobPayload(inputJson: string): JobPayload {
     versionId: parsed.versionId ?? null,
     actorId: parsed.actorId ?? null,
     resumeFromFailed: parsed.resumeFromFailed === true,
+    feedback: typeof parsed.feedback === 'string' ? parsed.feedback : undefined,
   }
 }
 
@@ -226,12 +231,14 @@ export async function executeStoryboardPlanJob(jobId: string, payload: JobPayloa
 
   await jobService.reportProgress(jobId, { stage: 'planning', label: '正在拆分镜头…' })
 
+  // 经验复利（025 战线三）：跨项目高分范例的 prompt 写法注入分镜教学——高分沉淀反哺新项目
+  const exemplarPrompts = await exemplarService.topPromptsForTeaching(3).catch(() => [])
   const storyboard = await generateStoryboard(record, concept, workingStory, {
     contentId: content.id,
     versionId: content.currentVersionId,
     purpose: 'storyboard.generate',
     actorId: payload.actorId,
-  })
+  }, { exemplarPrompts })
   await planService.saveStoryboard(content.id, storyboard, payload.actorId ?? 'system')
 
   const shotCount = storyboard.scenes.reduce((n, s) => n + s.shots.length, 0)
@@ -240,6 +247,57 @@ export async function executeStoryboardPlanJob(jobId: string, payload: JobPayloa
     scenes: storyboard.scenes.length,
     shots: shotCount,
     label: `分镜已就绪：${storyboard.scenes.length} 个场景 · ${shotCount} 个镜头。`,
+  })
+}
+
+// ---------------- Job: intent.directions（025 战线二：选方向同步等待清零） ----------------
+
+export async function executeDirectionsJob(jobId: string, payload: JobPayload): Promise<void> {
+  const content = await requireContentInStatus({ ...payload, jobId }, 'INTENT')
+  if (!content) return
+  const record = await intentService.requireRecord(content.id)
+
+  await jobService.reportProgress(jobId, { stage: 'ideating', label: '正在为你构思几个创作方向…' })
+
+  const directions = await generateDirections(record, {
+    contentId: content.id,
+    versionId: content.currentVersionId,
+    purpose: 'directions.generate',
+    actorId: payload.actorId,
+  })
+  await planService.saveDirections(content.id, directions, payload.actorId ?? 'system')
+
+  await jobService.complete(jobId, {
+    stage: 'done',
+    count: directions.length,
+    label: `已备好 ${directions.length} 个创作方向，挑一个你心动的。`,
+  })
+}
+
+// ---------------- Job: revision.plan（025 战线二：计算型 Job 首例） ----------------
+// 不推进状态机（REVIEW 原地）；plan+structure+feedback 存 outputJson，前端按 jobId 轮询取用。
+// 被 supersede（用户改反馈重提）的 Job：complete 条件写已拦，LLM 结果自然作废。
+
+export async function executeRevisionPlanJob(jobId: string, payload: JobPayload): Promise<void> {
+  const feedback = payload.feedback?.trim()
+  if (!feedback || feedback.length < 2) throw new NonRetryableJobError('修订反馈缺失或太短')
+  const version = payload.versionId ? await versionRepo.findById(db, payload.versionId) : null
+  if (!version?.structureJson) throw new NonRetryableJobError('配方不存在（先完成一次生成，再修改）')
+  const structure = parseStructure(version.structureJson)
+
+  await jobService.reportProgress(jobId, { stage: 'locating', label: '正在思考怎么改…' })
+
+  const outcome = await planRevision(feedback, structure, {
+    contentId: payload.contentId,
+    versionId: version.id,
+    purpose: 'revision.locate',
+    actorId: payload.actorId,
+  })
+  await jobService.complete(jobId, {
+    stage: 'done',
+    plan: outcome.plan,
+    structure: outcome.structure,
+    feedback,
   })
 }
 
@@ -334,7 +392,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       if (!imageGateEnabled()) break // 门关闭：单次直过（评估对照模式）
       if (!shouldRegenerate(attempts)) break
       const lastIssues = attempts[attempts.length - 1]!.verdict?.issues ?? []
-      prompt = variantImagePrompt(basePrompt, lastIssues, attempt)
+      prompt = variantImagePrompt(basePrompt, lastIssues, attempt, facts.shotSize)
     }
     const { best, skipped } = pickBestAttempt(attempts)
     const bestVerdict = best.verdict
@@ -762,6 +820,8 @@ export async function executeJob(jobId: string, type: string, inputJson: string)
   if (!payload.contentId) throw new NonRetryableJobError('Job 缺少 contentId')
   if (type === 'story.draft') return executeStoryDraftJob(jobId, payload)
   if (type === 'storyboard.plan') return executeStoryboardPlanJob(jobId, payload)
+  if (type === 'intent.directions') return executeDirectionsJob(jobId, payload)
+  if (type === 'revision.plan') return executeRevisionPlanJob(jobId, payload)
   if (type === 'video.storyboard') return executeStoryboardJob(jobId, payload)
   if (type === 'video.render') return executeRenderJob(jobId, payload)
   throw new NonRetryableJobError(`未知 Job 类型：${type}`)

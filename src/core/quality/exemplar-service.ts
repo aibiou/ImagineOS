@@ -115,4 +115,23 @@ export const exemplarService = {
     }
     return { count: rows.length, best }
   },
+
+  /** 跨项目高分写法范例（025 战线三，经验复利闭环的另一半）：全库按分降序取 top-N。
+   *  与参考帧的区别：参考帧教 VLM「长什么样」（同片图像比对），这里教分镜 LLM「怎么写」
+   *  （跨项目 prompt 写法遗传——高分镜头沉淀的写法反哺新项目的 imagePrompt 创作）。
+   *  只取 prompt 文本，不加载资产文件。 */
+  async topPromptsForTeaching(limit = 3): Promise<Array<{ imagePrompt: string; score: number; summary: string }>> {
+    const rows = await db.shotExemplar.findMany({ orderBy: { createdAt: 'desc' }, take: 50 })
+    const parsed: Array<{ imagePrompt: string; score: number; summary: string }> = []
+    for (const r of rows) {
+      try {
+        const imagePrompt = (JSON.parse(r.promptJson) as { imagePrompt?: string }).imagePrompt ?? ''
+        const scoreJson = JSON.parse(r.scoreJson) as { score?: number; summary?: string }
+        if (!imagePrompt || typeof scoreJson.score !== 'number') continue
+        parsed.push({ imagePrompt, score: scoreJson.score, summary: scoreJson.summary ?? '' })
+      } catch { /* 坏行跳过 */ }
+    }
+    parsed.sort((a, b) => b.score - a.score)
+    return parsed.slice(0, Math.max(0, limit))
+  },
 }

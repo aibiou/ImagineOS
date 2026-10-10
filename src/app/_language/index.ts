@@ -209,7 +209,7 @@ export const STORYBOARD_WAIT = {
   ] as WaitHint[],
 } as const
 
-/** 构思方向的等待叙事（INTENT 阶段，同步调用） */
+/** 构思方向的等待叙事（INTENT 阶段，intent.directions Job） */
 export const DIRECTIONS_WAIT = {
   title: '正在为你构思几个创作方向…',
   expectedLabel: '通常需要半分钟',
@@ -217,6 +217,18 @@ export const DIRECTIONS_WAIT = {
     { afterSec: 0, text: '正在从你的想法里找三种不同的可能' },
     { afterSec: 12, text: '正在给每个方向写一句话故事与视觉气质' },
     { afterSec: 30, text: '模型有点繁忙，再等等就好' },
+  ] as WaitHint[],
+} as const
+
+/** 修订定位的等待叙事（REVIEW 阶段，revision.plan Job——025 战线二异步化） */
+export const REVISION_WAIT = {
+  title: '正在思考怎么改…',
+  expectedLabel: '这一步通常需要半分钟',
+  hints: [
+    { afterSec: 0, text: '正在理解你这句话想让什么变、不让什么变' },
+    { afterSec: 12, text: '正在定位该改哪一层：全片基调、场景、人物还是单个镜头' },
+    { afterSec: 30, text: '正在推敲改法，保证只动该动的、其余逐字保留' },
+    { afterSec: 60, text: '模型有点繁忙，仍在坚持想——不会丢' },
   ] as WaitHint[],
 } as const
 

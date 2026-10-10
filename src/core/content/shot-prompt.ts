@@ -114,15 +114,23 @@ function framingFragment(shot: Pick<ShotSnapshot, 'shotSize'>): string {
   return ` Framing: ${SHOT_SIZE_FRAMING[shot.shotSize]}.`
 }
 
+/** 景别指令前置（025 战线一）：图像模型对 prompt 开头的注意力最高——
+ *  024 实战镜4 暴露「prompt 要求特写、模型给中景」，中部的 Framing 提示权重不足。
+ *  首抽即前置硬指令；尾部 framingFragment 保留（首尾双保险）。 */
+function framingLead(shot: Pick<ShotSnapshot, 'shotSize'>): string {
+  if (!shot.shotSize) return ''
+  return `Framing requirement: ${SHOT_SIZE_FRAMING[shot.shotSize]}. `
+}
+
 function styleOf(structure: VersionStructure): string {
   return structure.style ?? structure.concept?.visualDirection ?? 'cinematic, warm tone'
 }
 
-/** 图像生成提示词（执行层增强版：基底 + 景别兜底 + 世界一致性 + 人物锚点 + 围栏） */
+/** 图像生成提示词（执行层增强版：景别前置硬指令 + 基底 + 世界一致性 + 人物锚点 + 围栏） */
 export function imagePromptFor(shot: ShotSnapshot, structure: VersionStructure): string {
   const base = shot.imagePrompt ?? shot.visualDescription ?? 'a quiet cinematic moment'
   const characters = structure.characters.length > 0 ? structure.characters : (structure.story?.characters ?? [])
-  return `${base}.${framingFragment(shot)}${anchorFragment(shot, characters)}${worldFragment(shot, structure)}${lookBookFragment(structure)} Visual style: ${styleOf(structure)}. No text, no watermark, no subtitles in image.`
+  return `${framingLead(shot)}${base}.${framingFragment(shot)}${anchorFragment(shot, characters)}${worldFragment(shot, structure)}${lookBookFragment(structure)} Visual style: ${styleOf(structure)}. No text, no watermark, no subtitles in image.`
 }
 
 /** 图生视频运动提示词：首帧已定画面，描述「这一镜怎么动起来」（锚点同样注入，保持运动中人物与世界一致） */

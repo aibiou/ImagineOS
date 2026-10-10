@@ -137,18 +137,27 @@ if (state.step === 'intent' && !intentEvidence) {
   log('意图就绪（已确认）')
 }
 
-// ---------- 3. 创作方向 ----------
+// ---------- 3. 创作方向（025：入队即返 → 轮询出现） ----------
 if (state.step === 'directions') {
   // 断点恢复：方向已生成则直接用（避免重复 LLM 调用与 422）
   const probe = await api('GET', `/api/contents/${id}/creation`)
   let directions = probe.json?.plan?.directions
   if (!directions?.length) {
     const res = await api('POST', `/api/contents/${id}/directions`, {})
-    if (res.status !== 200) throw new Error(`directions 失败：${res.status} ${JSON.stringify(res.json)?.slice(0, 300)}`)
-    directions = res.json.directions
+    if (res.status !== 200) throw new Error(`directions 入队失败：${res.status} ${JSON.stringify(res.json)?.slice(0, 300)}`)
+    for (let i = 0; i < 72 && !directions?.length; i++) {
+      await new Promise((r) => setTimeout(r, 2500))
+      const p2 = await api('GET', `/api/contents/${id}/creation`)
+      directions = p2.json?.plan?.directions
+      const job = p2.json?.job
+      if (job && (job.status === 'failed' || job.status === 'timeout')) {
+        throw new Error(`方向构思失败：${job.error ?? '未知'}`)
+      }
+    }
   } else {
     log('方向已存在（断点恢复），直接选用')
   }
+  if (!directions?.length) throw new Error('方向轮询超时（180s）')
   const picked = directions[0]
   state.directionId = picked.id
   state.step = 'selected'

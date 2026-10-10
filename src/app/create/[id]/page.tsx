@@ -44,7 +44,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Progress } from '@/components/ui/progress'
 import { Textarea } from '@/components/ui/textarea'
 import { useToast } from '@/hooks/use-toast'
-import { ASPECT_COPY, CAMERA_LABEL, COPY, CREATE_STEPS, DIRECTIONS_WAIT, GENERATION_MODE_DESC, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, STORYBOARD_WAIT, STORY_WAIT, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, elapsedLabel, generationModeLabel, versionLabel, versionWithCount, type WaitHint } from '@/app/_language'
+import { ASPECT_COPY, CAMERA_LABEL, COPY, CREATE_STEPS, DIRECTIONS_WAIT, GENERATION_MODE_DESC, REVISION_WAIT, SCENE_FUNCTION_LABEL, SHOT_SIZE_LABEL, STAGE_LABEL, STORYBOARD_WAIT, STORY_WAIT, TRANSITION_LABEL, WORLD_CONSISTENCY_COPY, durationLabel, elapsedLabel, generationModeLabel, versionLabel, versionWithCount, type WaitHint } from '@/app/_language'
 
 // ---------- 类型（/api/contents/:id/creation 的返回形态） ----------
 
@@ -80,6 +80,16 @@ interface RevisionPlanResult {
   plan: { targetLevel: string; summary: string; reason: string; affectedShotIndexes: number[]; changeKind: string }
   structure: unknown
   feedback: string
+}
+
+/** 修订定位 Job 的轮询结果（GET /revision/plan?jobId=） */
+interface RevisionJobStatus {
+  jobId: string
+  status: string
+  plan?: RevisionPlanResult['plan'] | null
+  structure?: unknown
+  feedback?: string | null
+  error?: string
 }
 
 // ---------- 小工具 ----------
@@ -131,6 +141,9 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [revisionText, setRevisionText] = useState('')
   const [revisionPlan, setRevisionPlan] = useState<RevisionPlanResult | null>(null)
+  // 修订定位 Job 化（025 战线二）：POST 入队即返，轮询 GET 取 plan——修订再也不裸转圈
+  const [revisionJobId, setRevisionJobId] = useState<string | null>(null)
+  const [revisionStartedAt, setRevisionStartedAt] = useState<number | null>(null)
 
   const load = useCallback(
     async (silent = false) => {
@@ -195,10 +208,17 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     !jobActive &&
     (jobFailed || bundle?.lastError != null || (status === 'STORY' && !bundle?.story))
 
+  // 方向构思失败（025 战线二：intent.directions Job 化后的诚实失败面）——
+  // 无活跃 Job、无方向、有失败标记 → 失败卡 + 重试入口，绝不无限「正在构思」
+  const directionsFailed =
+    status === 'INTENT' && !jobActive && !bundle?.plan.directions?.length &&
+    (jobFailed || bundle?.lastError != null)
+
   // 生成中轮询（UX 原则五：每步可见；失败态停止轮询——显示错误与重试入口）
-  // 2026-10-09：规划层 Job（story.draft/storyboard.plan）活跃时同样轮询——
+  // 2026-10-09：规划层 Job（story.draft/storyboard.plan）活跃时同样轮询；
+  // 2026-10-10（025）：intent.directions Job 活跃时同理由 jobActive 覆盖——
   // 刷新/断连后页面自动接续，用户不用手动刷新看结果
-  const generating = !generationFailed && !planFailed && (status === 'GENERATING' || status === 'RENDERING' || jobActive)
+  const generating = !generationFailed && !planFailed && !directionsFailed && (status === 'GENERATING' || status === 'RENDERING' || jobActive)
   useEffect(() => {
     if (!generating) return
     const t = setInterval(() => void load(true), 2500)
@@ -242,19 +262,18 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     })
   }, [bundle, status, id, fireOnce, load])
 
-  // INTENT 且无方向 → 自动生成一批（同步 LLM：150s 客户端超时保险；超时后先拉一次状态——
-  // 服务端可能已在客户端断连后完成落库，避免误报失败）
+  // INTENT 且无方向 → 自动生成一批（025 战线二 Job 化：入队即返回，轮询接续——
+  // 刷新/断连后服务端独立推进，回来自动到位；有失败标记不自动重试，交给用户「再试一次」）
   useEffect(() => {
-    if (!bundle || status !== 'INTENT' || bundle.plan.directions?.length) return
+    if (!bundle || status !== 'INTENT' || bundle.plan.directions?.length || bundle.lastError != null) return
     void fireOnce(`directions-${bundle.content.id}`, async () => {
-      setBusy('directions')
-      const { ok, json } = await postJson(`/api/contents/${id}/directions`, undefined, { timeoutMs: 150_000 })
-      setBusy(null)
-      const fresh = await load(true)
-      if (!ok && !fresh?.plan.directions?.length) {
+      const { ok, json } = await postJson(`/api/contents/${id}/directions`)
+      if (!ok) {
         autoFired.current.delete(`directions-${bundle.content.id}`)
-        toast({ title: '方向生成未成功', description: json.message ?? '稍后再试', variant: 'destructive' })
+        toast({ title: '方向生成没有开始', description: json.message ?? '稍后再试', variant: 'destructive' })
+        return
       }
+      await load(true) // 立即拉一次：活跃 Job 出现 → 轮询接续，方向就绪自动出现
     })
   }, [bundle, status, id, fireOnce, load, toast])
 
@@ -348,14 +367,46 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       return
     }
     setBusy('revision-plan')
-    const { ok, json } = await postJson<RevisionPlanResult>(`/api/contents/${id}/revision/plan`, { feedback })
-    setBusy(null)
+    setRevisionPlan(null)
+    // 入队即返（025 战线二）：同反馈复用活跃 Job；改了反馈则旧 Job 被 supersede
+    const { ok, json } = await postJson<{ jobId: string }>(`/api/contents/${id}/revision/plan`, { feedback })
     if (!ok) {
+      setBusy(null)
       toast({ title: '还没想好怎么改', description: json.message ?? '稍后再试', variant: 'destructive' })
       return
     }
-    setRevisionPlan(json)
+    setRevisionJobId(json.jobId)
+    setRevisionStartedAt(Date.now())
+    // 结果由下方轮询 effect 接续（对话框内等待叙事 + 失败可重试）
   }, [id, revisionText, toast])
+
+  // 修订定位 Job 轮询：succeeded 取 plan；failed/superseded 诚实报错可重提；关窗即停
+  useEffect(() => {
+    if (!revisionJobId || busy !== 'revision-plan' || !revisionOpen) return
+    let stopped = false
+    const t = setInterval(async () => {
+      if (stopped) return
+      try {
+        const res = await fetch(`/api/contents/${id}/revision/plan?jobId=${revisionJobId}`)
+        if (!res.ok) return // 网络抖动：下一轮再试
+        const json = (await res.json()) as RevisionJobStatus
+        if (json.status === 'succeeded' && json.plan) {
+          stopped = true
+          setRevisionPlan({ plan: json.plan, structure: json.structure, feedback: json.feedback ?? revisionText.trim() })
+          setRevisionJobId(null)
+          setRevisionStartedAt(null)
+          setBusy(null)
+        } else if (json.status === 'failed' || json.status === 'timeout') {
+          stopped = true
+          setRevisionJobId(null)
+          setRevisionStartedAt(null)
+          setBusy(null)
+          toast({ title: '修订定位没有成功', description: json.error ?? '稍后再试一次', variant: 'destructive' })
+        }
+      } catch { /* 网络抖动：下一轮再试 */ }
+    }, 2500)
+    return () => { stopped = true; clearInterval(t) }
+  }, [revisionJobId, busy, revisionOpen, id, revisionText, toast])
 
   const applyRevision = useCallback(async () => {
     if (!revisionPlan) return
@@ -372,6 +423,8 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
     setRevisionOpen(false)
     setRevisionPlan(null)
     setRevisionText('')
+    setRevisionJobId(null)
+    setRevisionStartedAt(null)
     toast({ title: '新的一版开始了', description: json.message })
     await load(true)
   }, [id, revisionPlan, load, toast])
@@ -478,8 +531,8 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       {status === 'IDEA' && <IdeaStage bundle={bundle} questions={questions} answers={answers} setAnswers={setAnswers} busy={busy === 'intent' || busy === 'intent-auto'} aspectBusy={busy === 'intent-aspect'} onPickAspect={(ar) => void pickAspect(ar)} onAsk={() => void askIntent()} onConfirm={() => void confirmIntent()} />}
       {/* ---- INTENT：方向选择（构思等待 = 叙事 + 计时，不再裸转圈；故事展开期间隐藏，一次只讲一件事） ---- */}
       {(status === 'INTENT' || (status === 'PLANNING' && !storyPending)) && (
-        <DirectionStage directions={plan.directions} loading={busy === 'directions'} selectedId={plan.concept?.directionId} onSelect={(directionId) => void act('select', `/api/contents/${id}/directions/select`, { directionId }, '方向已锁定')}
-          onRegenerate={() => void act('directions', `/api/contents/${id}/directions`, { regenerate: true }, '正在重新构思')} />
+        <DirectionStage directions={plan.directions} loading={busy === 'directions'} failed={directionsFailed} failureMessage={bundle?.lastError?.message ?? (typeof bundle?.job?.error === 'string' ? bundle.job.error : undefined)} selectedId={plan.concept?.directionId} onSelect={(directionId) => void act('select', `/api/contents/${id}/directions/select`, { directionId }, '方向已锁定')}
+          onRetry={() => void act('directions-retry', `/api/contents/${id}/directions`, undefined, '正在重新构思')} onRegenerate={() => void act('directions', `/api/contents/${id}/directions`, { regenerate: true }, '正在重新构思')} />
       )}
 
       {/* ---- PLANNING/STORY：故事展开（Job 化：等待叙事 / 失败重试 / 故事审阅） ---- */}
@@ -564,7 +617,7 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
       )}
 
       {/* 修订对话框 */}
-      <Dialog open={revisionOpen} onOpenChange={(open) => { if (!open) { setRevisionOpen(false); setRevisionPlan(null) } }}>
+      <Dialog open={revisionOpen} onOpenChange={(open) => { if (!open) { setRevisionOpen(false); setRevisionPlan(null); setRevisionJobId(null); setRevisionStartedAt(null); if (busy === 'revision-plan') setBusy(null) } }}>
         <DialogContent className="border-white/10 bg-zinc-900 sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -577,14 +630,24 @@ export default function CreatePage({ params }: { params: Promise<{ id: string }>
           </DialogHeader>
           {!revisionPlan ? (
             <>
-              <Textarea value={revisionText} onChange={(e) => setRevisionText(e.target.value)} placeholder="再温暖一点，结尾加上母亲在门口招手。" className="min-h-[88px] border-white/10 bg-zinc-950 placeholder:text-zinc-600" maxLength={300} />
-              <DialogFooter className="gap-2 sm:gap-0">
-                <Button variant="ghost" onClick={() => setRevisionOpen(false)} className="text-zinc-400">取消</Button>
-                <Button onClick={() => void analyzeRevision()} disabled={busy === 'revision-plan'} className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
-                  {busy === 'revision-plan' && <Loader2 className="size-4 animate-spin" aria-hidden />}
-                  <Wand2 className="size-4" aria-hidden /> 想想怎么改
-                </Button>
-              </DialogFooter>
+              {busy === 'revision-plan' ? (
+                // 修订定位 Job 化（025 战线二）：等待叙事 + 已耗时——修订再也不裸转圈；
+                // 改了反馈重提会 supersede 旧任务，这里永远显示最新一次的等待
+                <div className="py-2">
+                  <NarrativeProgress title={REVISION_WAIT.title} hints={REVISION_WAIT.hints} expectedLabel={REVISION_WAIT.expectedLabel} startedAt={revisionStartedAt} retryCount={0} />
+                  <p className="mt-3 text-center text-xs leading-relaxed text-zinc-600">想好了就会自动出现在这里——不用刷新，也可以先去干点别的。</p>
+                </div>
+              ) : (
+                <>
+                  <Textarea value={revisionText} onChange={(e) => setRevisionText(e.target.value)} placeholder="再温暖一点，结尾加上母亲在门口招手。" className="min-h-[88px] border-white/10 bg-zinc-950 placeholder:text-zinc-600" maxLength={300} />
+                  <DialogFooter className="gap-2 sm:gap-0">
+                    <Button variant="ghost" onClick={() => setRevisionOpen(false)} className="text-zinc-400">取消</Button>
+                    <Button onClick={() => void analyzeRevision()} className="gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
+                      <Wand2 className="size-4" aria-hidden /> 想想怎么改
+                    </Button>
+                  </DialogFooter>
+                </>
+              )}
             </>
           ) : (
             <>
@@ -931,22 +994,60 @@ function IdeaStage({
 function DirectionStage({
   directions,
   loading,
+  failed,
+  failureMessage,
   selectedId,
   onSelect,
+  onRetry,
   onRegenerate,
 }: {
   directions: CreationBundle['plan']['directions']
   loading: boolean
+  /** 诚实失败（025 战线二）：Job 终态失败且无方向 → 失败卡 + 重试入口，绝不无限「正在构思」 */
+  failed: boolean
+  failureMessage?: string
   selectedId?: string
   onSelect: (directionId: string) => void
+  onRetry: () => void
   onRegenerate: () => void
 }) {
-  const waiting = loading || !directions?.length
+  const waiting = !failed && (loading || !directions?.length)
   // 同步等待的计时锤点：等待分支首次渲染时惰性锚定（ref lazy-init，React 文档认可的模式；
   // 方向到达即复位，换一批重新计时）。每秒跳动由 useElapsedSeconds 内部 interval 驱动
   const waitStartRef = useRef<number | null>(null)
   if (waiting && waitStartRef.current == null) waitStartRef.current = Date.now()
   if (!waiting) waitStartRef.current = null
+  if (failed) {
+    // 诚实失败（025 战线二）：方向构思终态失败——失败可见 + 明确重试入口，绝不无限「正在构思」
+    return (
+      <motion.section initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}>
+        <Card className="border-red-400/25 bg-zinc-900/60">
+          <CardContent className="space-y-4 p-6 sm:p-8">
+            <div className="flex items-center gap-3">
+              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-red-500/15">
+                <AlertTriangle className="size-5 text-red-300" aria-hidden />
+              </div>
+              <div className="min-w-0">
+                <div className="text-sm font-semibold text-zinc-100">方向还没有构思出来</div>
+                <div className="text-xs text-zinc-500">模型这会儿没接上，你的想法没有丢</div>
+              </div>
+            </div>
+            {failureMessage && (
+              <div className="rounded-lg border border-white/10 bg-zinc-950/70 p-3">
+                <p className="break-words text-xs leading-relaxed text-zinc-400">
+                  <span className="text-zinc-500">原因：</span>
+                  {failureMessage}
+                </p>
+              </div>
+            )}
+            <Button onClick={onRetry} className="w-full gap-2 bg-gradient-to-r from-violet-500 to-fuchsia-500 text-white hover:opacity-90">
+              <Wand2 className="size-4" aria-hidden /> 再试一次
+            </Button>
+          </CardContent>
+        </Card>
+      </motion.section>
+    )
+  }
   if (waiting) {
     // 构思等待：叙事轮播 + 已耗时（同步 LLM 等待也绝不裸转圈）
     return (
@@ -969,7 +1070,7 @@ function DirectionStage({
         </Button>
       </div>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {directions.map((d, i) => (
+        {directions?.map((d, i) => (
           <motion.button
             key={d.id}
             initial={{ opacity: 0, y: 12 }}

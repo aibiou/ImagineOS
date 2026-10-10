@@ -233,11 +233,24 @@ const STORYBOARD_JSON_HINT = `{
   ]
 }`
 
+/** 高分范例教学段（025 战线三，纯函数）：跨项目高分镜头的 imagePrompt 写法 few-shot。
+ *  教写法密度（主体动作前置、光线具体、构图词与景别一致、环境锚定），不教内容——
+ *  空库零注入（向后兼容：无范例时 prompt 与旧版逐字一致）。 */
+export function exemplarTeachingSection(exemplars: Array<{ imagePrompt: string; score: number }>): string {
+  if (exemplars.length === 0) return ''
+  const lines = exemplars.map((e, i) => {
+    const truncated = e.imagePrompt.length > 320 ? `${e.imagePrompt.slice(0, 320)}…` : e.imagePrompt
+    return `${i + 1}. ${truncated}（该写法实测质检 ${e.score.toFixed(1)} 分）`
+  })
+  return `\n\n已验证的高分写法范例——以下是真实图像模型上通过质检并拿过高分的 imagePrompt 片段（学习它们的写法密度：主体与动作前置、光线具体可执行、构图词与景别一致、环境锚定不漂移；理解写法即可，绝不照抄内容）：\n${lines.join('\n')}`
+}
+
 export async function generateStoryboard(
   intent: IntentRecord,
   concept: { name: string; oneLiner: string; visualDirection?: string },
   story: StorySnapshot,
   ctx: ProviderCallContext,
+  opts?: { exemplarPrompts?: Array<{ imagePrompt: string; score: number }> },
 ): Promise<StorySnapshot> {
   const targetSec = intent.fields.duration ?? 45
   const shotCount = planShotCount(targetSec)
@@ -264,7 +277,11 @@ ${story.lookBook ? `- 全片视觉圣经（所有镜头的色调与光线气质�
 
   const parsed = await completeJson(
     StoryboardSchema,
-    { system: STORYBOARD_SYSTEM, user: userPrompt, jsonHint: STORYBOARD_JSON_HINT },
+    {
+      system: STORYBOARD_SYSTEM + exemplarTeachingSection(opts?.exemplarPrompts ?? []),
+      user: userPrompt,
+      jsonHint: STORYBOARD_JSON_HINT,
+    },
     ctx,
     { temperature: 0.6 },
   )

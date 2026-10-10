@@ -187,6 +187,64 @@ export const planService = {
     return { jobId: job.id, alreadyRunning: false }
   },
 
+  /** 生成创作方向（INTENT）→ 入队 intent.directions Job（025 战线二：同步等待清零的最后一处）。
+   *  幂等：已有活跃 Job 直接复用——含「换一批」场景（旧批还在跑时换一批返回 alreadyRunning，
+   *  等本批出来再换，语义诚实：绝不为了「立即换」把在跑的 LLM 调用作废）。 */
+  async startDirections(contentId: string, actorId: string): Promise<{ jobId: string; alreadyRunning: boolean }> {
+    const content = await contentRepo.findById(db, contentId)
+    if (!content) throw new NotFoundError('作品', contentId)
+    if (content.status !== 'INTENT') {
+      throw new DomainValidationError('先确认你的表达，再挑选创作方向')
+    }
+    const active = await jobService.activeJobForContent(contentId)
+    if (active) return { jobId: active.id, alreadyRunning: true }
+    const job = await jobService.enqueue({
+      contentId,
+      versionId: content.currentVersionId,
+      type: 'intent.directions',
+      payload: { contentId, versionId: content.currentVersionId, actorId },
+    })
+    return { jobId: job.id, alreadyRunning: false }
+  },
+
+  /** 修订定位（REVIEW，计算型 Job 首例：不推进状态机，结果存 outputJson）。
+   *  并发语义（supersede）：同 feedback 活跃 Job 复用；不同 feedback → 取代旧 Job + 入新 Job——
+   *  用户「改了主意重新说」永远拿到新反馈的结果，绝不被旧反馈的慢结果卡住。 */
+  async startRevisionPlan(
+    contentId: string,
+    feedback: string,
+    actorId: string,
+  ): Promise<{ jobId: string; alreadyRunning: boolean; supersededJobId: string | null }> {
+    const content = await contentRepo.findById(db, contentId)
+    if (!content) throw new NotFoundError('作品', contentId)
+    if (!content.currentVersionId) {
+      throw new DomainValidationError('先完成一次生成，再修改')
+    }
+    const active = await db.generationJob.findFirst({
+      where: { contentId, type: 'revision.plan', status: { in: ['queued', 'claimed', 'running'] } },
+      orderBy: { createdAt: 'desc' },
+    })
+    if (active) {
+      const sameFeedback = (() => {
+        try {
+          return (JSON.parse(active.inputJson ?? '{}') as { feedback?: string }).feedback === feedback
+        } catch {
+          return false
+        }
+      })()
+      if (sameFeedback) return { jobId: active.id, alreadyRunning: true, supersededJobId: null }
+      const superseded = await jobService.supersede(active.id, '已被新的修订请求取代（你改了想怎么改的话）')
+      void superseded
+    }
+    const job = await jobService.enqueue({
+      contentId,
+      versionId: content.currentVersionId,
+      type: 'revision.plan',
+      payload: { contentId, versionId: content.currentVersionId, actorId, feedback },
+    })
+    return { jobId: job.id, alreadyRunning: false, supersededJobId: active?.id ?? null }
+  },
+
   /** 读取工作副本 Story（draftJson 优先，行级数据兜底；无则 null） */
   async getWorkingStory(contentId: string): Promise<StorySnapshot | null> {
     const story = await db.story.findFirst({ where: { contentId }, orderBy: { createdAt: 'asc' } })

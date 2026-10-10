@@ -865,3 +865,29 @@ Stage Summary:
 - 产品级能力升维：失败恢复从「Job 内重试」扩展到「跨 Job 打捞」——供给受限世界里用户点重新生成的代价从整片重烧降为只补缺口；退避从瞬时故障尺度对齐到配额窗口尺度
 - 门规则完成第一次实战校准（叙事性环境文字不再误杀）——gate-metrics 基线就绪，校准效果待下一轮真实管线对照
 - 已知边界：镜4 类「景别遵从度」问题（prompt 要求特写、模型给中景）属图像模型指令遵从能力，变体 prompt 的构图 nudge 效果有限——列入后续 shot-prompt 迭代方向；agnes 免费档累计配额不可绕过，P3 供给升级是产品时长承诺的前置条件
+
+---
+Task ID: no-blind-spot-025
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「好，继续全方位无死角的提升」——汇聚 022/023/024 三个里程碑的全部已知边界，四条战线一次清零（设计 docs/design/no-blind-spot-025.md）
+
+Work Log:
+- 死角盘点（设计先行）：D1 景别遵从度（024 镜4 实战）/ D2 directions 同步分钟级（022 遗留）/ D3 revision.plan 同步且无并发防护（022 遗留）/ D4 worker 单循环串行（022 遗留）/ D5 范例库只做同片参考帧不复利（023 遗留）→ 设计文档落盘后动手
+- 战线一（景别遵从度）：imagePromptFor 景别指令前置（Framing requirement: … 放 prompt 最前 + 尾部保留双保险——图像模型对开头注意力最高）；variantImagePrompt 增第 4 参 framing → 重抽前置 FRAMING (mandatory) 硬指令（执行点从 gateFacts.shotSize 传入，与首抽同源）
+- 战线三（经验复利跨项目激活）：exemplarService.topPromptsForTeaching(3) 全库按分降序取高分写法（不加载资产只教写法）；story.ts exemplarTeachingSection 纯函数注入分镜 system prompt（≤3 条 + 320 字截断 + 分数标注；空库零注入向后兼容）；executeStoryboardPlanJob 查询注入——高分沉淀的 prompt 写法反哺新项目分镜，经验复利从「同片参考帧」扩展为「跨项目写法遗传」
+- 战线二（规划 LLM 全 Job 化·同步等待清零）：intent.directions Job（路由入队即返回 + startDirections 幂等复用含「换一批」诚实语义 + 执行器状态守卫 + 前端 auto-fire 改轮询接续 + directionsFailed 诚实失败卡 + 重试入口）；revision.plan 计算型 Job 首例（不推进状态机、结果存 outputJson、GET /revision/plan?jobId= 轮询通道）——supersede 新并发语义（同反馈复用/异反馈直接终态写 failed 不走重试路径不传导 Content 错误）+ complete() 条件化（与 markRunning 同款防线：被取代的 Job 即使 LLM 迟到返回也翻不回 succeeded）；修订对话框等待叙事卡（REVISION_WAIT 字典）+ 关窗清理
+- 战线四（worker 双通道）：claimNext(types?, excludeTypes?) 类型过滤（不传=旧行为）；PLANNING_JOB_TYPES=[story.draft, storyboard.plan, intent.directions, revision.plan] 独立循环 + 生成通道排除规划类——规划 Job 永远有专属吞吐，绝不与 10-50 分钟视频生成互相排队；runOneTick 无参兼容旧行为（既有测试零改动）
+- 顺带补强：promptSummaryOf 增 system 截断 2000 字采集（TextPlanPayload 键是 system/user——此前 text.plan 账本只有 purpose 一键，规划层教学/范例注入从无账本证据，020 的注入证据纪律延伸到规划层）
+- E2E 揪出两处缺陷当场修复：①parseJobPayload 白名单漏 feedback（Job 入库正确但执行器读不到→「修订反馈缺失或太短」）补透传+回归测试；②上述 system 采集缺失
+- E2E 驱动库跟进异步形态：lib.mjs driveCase directions 段改 waitForDirections 轮询 + 新增导出；cinema-world/cinema-product/ling-pipeline 三驱动同改（share 驱动本就轮询式免改）；probe-supply-025.mjs 三通道探测（agnes llm ✓ image ✓ video queue-full 503）
+- 真实管线 E2E（清晨旧书店故事，断点续跑三轮）：POST /directions 858ms 入队即返→轮询 3 方向零刷新出现→期间 bundle.job.type=intent.directions（双通道领取实证）；分镜账本 system 摘要 2001 字含「已验证的高分写法范例」段（4 条范例跨项目注入）；revision.plan 运行中重提→旧 Job failed（「已被新的修订修订请求取代」人话原因）+新 plan 到达 targetLevel=audio（旁白语气层正确定位）——账本两行互证；生成段 6 镜：首镜 prompt 以「Framing requirement: medium shot…」开头（前置兑现）、范例库 4→9（5 条新高分：8.35/9.3/9.1/9.3/9.3——显著高于 024 基线一次通过率 30% 的水位）、门重抽 attempts=2~3 择优实战（镜2 三抽仍 5.45→诚实 pass=false 入库不冒充）、vision 评审 13 次 in-loop；agnes 视频 queue-full 全程→诚实退避 retry=3（024 已闭环的语义回归确认）
+- 浏览器走查（1440×900 agent-browser，雨夜旧茶馆故事）：IDEA 自动理解→「就这样，继续」→方向等待卡逐字渲染（叙事轮播+已进行 3 秒+参考时长+「不用刷新」安抚）→3 方向网格零刷新自动出现（换一批/走这个方向/情绪/时长角标齐全）→console 零错误；截图 no-blind-spot-directions-wait/ready ×3 入 download/ui-e2e/；两件 E2E 内容清场删除
+- 测试：tests/no-blind-spot-025.test.ts +19（景别前置/重抽 mandatory/无 shotSize 零注入/教学段注入与截断/topPrompts 排序与坏行容错/revision.plan 入队幂等/supersede 双分支/被取代不可翻回/无版本拒绝/directions 入队幂等与状态守卫/claimNext 三态过滤/runOneTick 兼容/claimAndExecute 分道/feedback 透传回归）→ 全量 235/235；tsc 0 错；eslint 0 错
+
+Stage Summary:
+- 同步等待清零达成：§53「绝不长请求挂生成」覆盖最后两处（directions/revision.plan）——全链路（意图理解秒级/方向/故事/分镜/修订定位/生成/渲染）无一处分钟级同步 HTTP
+- 计算型 Job 新范式 + supersede 并发语义：无状态机推进的纯 LLM 计算也能 Job 化（结果存 outputJson + 专用 GET 轮询通道）；用户「改了主意重新说」永远拿新反馈的结果，旧结果确定作废（complete 条件化双保险）
+- 经验复利闭环完整：高分镜头沉淀（023）→ prompt 写法跨项目反哺分镜（本轮）→ 新项目首过率提升（8.35~9.3 分实证）→ 更多高分沉淀——自增强回路转动
+- 景别遵从度：首抽前置 + 重抽 mandatory 双硬化，首镜账本实证 prompt 以 Framing requirement 开头
+- worker 双通道：规划/生成分道，多作品并行创作的调度死角消除（022 场景解锁）
+- 已知边界：agnes 视频 queue-full（503 供给侧瞬态，非配额墙）本轮贯穿——6 镜 4 native 完成后诚实退避；修订「换一批」在旧批构思中返回 alreadyRunning（等本批出来再换，语义诚实）；范例教学对「景别遵从度」的间接提升需下一轮 gate-metrics 对照量化（本轮 5 条高分是信号非结论）

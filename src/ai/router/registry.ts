@@ -347,8 +347,9 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ])
 }
 
-/** 账本输入摘要：prompt（截断 4000 字）+ size + promptHash（全量 sha256 前 16 位，复现精确匹配）+
- *  video 首帧哈希（图生视频首帧的一致性证据）+ vision 图像张数（绝不落 base64）——
+/** 账本输入摘要：prompt（截断 4000 字）+ system（截断 2000 字——规划层教学/范例注入的直接证据，
+ *  025 战线三：分镜 prompt 的高分写法范例段从此有账本可查）+ size + promptHash（全量 sha256 前 16 位，
+ *  复现精确匹配）+ video 首帧哈希（图生视频首帧的一致性证据）+ vision 图像张数（绝不落 base64）——
  *  世界一致性注入与画幅声明是否真的发生在调用时刻的直接证据 */
 function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined {
   if (typeof payload !== 'object' || payload === null) return undefined
@@ -357,6 +358,9 @@ function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined 
   if (typeof p.prompt === 'string' && p.prompt.length > 0) {
     summary.prompt = p.prompt.length > 4000 ? `${p.prompt.slice(0, 4000)}…` : p.prompt
     summary.promptHash = sha256Prefix(p.prompt)
+  }
+  if (typeof p.system === 'string' && p.system.length > 0) {
+    summary.system = p.system.length > 2000 ? `${p.system.slice(0, 2000)}…` : p.system
   }
   if (typeof p.size === 'string' && p.size.length > 0) summary.size = p.size
   if (typeof p.imageUrl === 'string' && p.imageUrl.length > 0) summary.firstFrameHash = sha256Prefix(p.imageUrl)

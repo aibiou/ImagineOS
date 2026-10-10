@@ -82,15 +82,26 @@ if (state.step === 'intent') {
   log('意图就绪')
 }
 
-// ---------- 3. 创作方向 ----------
+// ---------- 3. 创作方向（025：入队即返 → 轮询出现） ----------
 if (state.step === 'directions') {
   const res = await api('POST', `/api/contents/${id}/directions`, {})
-  if (res.status !== 200) throw new Error(`directions 失败：${res.status} ${JSON.stringify(res.json)?.slice(0, 300)}`)
-  const picked = res.json.directions[0]
+  if (res.status !== 200) throw new Error(`directions 入队失败：${res.status} ${JSON.stringify(res.json)?.slice(0, 300)}`)
+  let directions = null
+  for (let i = 0; i < 72 && !directions?.length; i++) {
+    await new Promise((r) => setTimeout(r, 2500))
+    const probe = await api('GET', `/api/contents/${id}/creation`)
+    directions = probe.json?.plan?.directions
+    const job = probe.json?.job
+    if (job && (job.status === 'failed' || job.status === 'timeout')) {
+      throw new Error(`方向构思失败：${job.error ?? '未知'}`)
+    }
+  }
+  if (!directions?.length) throw new Error('方向轮询超时（180s）')
+  const picked = directions[0]
   state.directionId = picked.id
   state.step = 'selected'
   saveState()
-  log(`方向：${res.json.directions.map((d) => d.name).join(' / ')} → 选「${picked.name}」`)
+  log(`方向：${directions.map((d) => d.name).join(' / ')} → 选「${picked.name}」`)
 }
 if (state.step === 'selected' && !state.selected) {
   const res = await api('POST', `/api/contents/${id}/directions/select`, { directionId: state.directionId })

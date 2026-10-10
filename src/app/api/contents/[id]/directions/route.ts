@@ -1,9 +1,10 @@
 // POST /api/contents/:id/directions —— 生成 2–4 个创作方向（E4 / §18）
-// body: { regenerate?: boolean } —— regenerate=true 整批换新
+// 2026-10-10 异步化（025 战线二）：入队 intent.directions Job 即返回（§53 绝不长请求挂生成
+// 的最后一处同步死角）。方向由前端轮询 /creation 接续；完成落库于 planService.saveDirections。
+// body: { regenerate?: boolean } —— regenerate=true 整批换新（旧批仍在跑时幂等复用，语义诚实）
 import { requireSessionUser, domainErrorToResponse, readJson } from '../../../_lib/session'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
-import { generateDirections } from '@/ai/planning/directions'
 import { z } from 'zod'
 
 const BodySchema = z.object({ regenerate: z.boolean().optional() })
@@ -25,18 +26,15 @@ export async function POST(req: Request, { params }: { params: Promise<{ id: str
       return Response.json({ error: 'illegal_transition', message: '先确认你的表达，再挑选创作方向' }, { status: 422 })
     }
 
-    const record = await intentService.requireRecord(id)
-    const directions = await generateDirections(record, {
-      contentId: id,
-      versionId: content.currentVersionId,
-      purpose: 'directions.generate',
-      actorId: user.id,
-    })
-    await planService.saveDirections(id, directions, user.id)
-
+    const { jobId, alreadyRunning } = await planService.startDirections(id, user.id)
     return Response.json({
-      directions,
-      message: parsed.data.regenerate ? '换了一批新方向。' : '为你准备了几个创作方向，挑一个你心动的。',
+      jobId,
+      alreadyRunning,
+      message: alreadyRunning
+        ? '这批方向还在构思中，马上就好。'
+        : parsed.data.regenerate
+          ? '正在重新构思一批方向。'
+          : '正在为你构思创作方向。',
     })
   } catch (e) {
     return domainErrorToResponse(e)

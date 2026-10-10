@@ -214,6 +214,24 @@ async function contentStatus(client, contentId) {
   return data.content.status
 }
 
+/** 方向就绪等待（025 战线二：POST /directions 入队即返，方向由轮询接续——
+ *  与 story/storyboard 同范式：服务端 Job 独立推进，客户端只轮询） */
+export async function waitForDirections(client, contentId, { timeoutMs = 180_000, intervalMs = 2500 } = {}) {
+  const start = Date.now()
+  let last = null
+  while (Date.now() - start < timeoutMs) {
+    last = await client.get(`/api/contents/${contentId}/creation`)
+    const directions = last?.plan?.directions ?? []
+    if (Array.isArray(directions) && directions.length > 0) return last
+    const job = last?.job
+    if (job && (job.status === 'failed' || job.status === 'timeout') && job.type === 'intent.directions') {
+      throw new Error(`方向构思失败：${job.error ?? '未知原因'}`)
+    }
+    await sleep(intervalMs)
+  }
+  throw new Error(`方向构思超时（${Math.round(timeoutMs / 1000)}s）`)
+}
+
 /**
  * 单步执行（带断点续跑容错）：API 422 且作品状态已超过该步前提状态 → 视为已完成，跳过。
  * 场景：进程中断时某步已落库但 state 未能写盘。
@@ -278,10 +296,13 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
     }
   })
 
-  // 3) directions
+  // 3) directions（025 战线二：入队即返 → 轮询方向出现——不再同步等 LLM）
   await step(state, client, caseId, 'intent', 'directions', 'INTENT', async () => {
     const res = await client.post(`/api/contents/${state.contentId}/directions`, {})
-    state.record.directions = (res.directions ?? []).map((d) => ({
+    state.record.directionsJobId = res.jobId ?? null
+    state.record.directionsAlreadyRunning = res.alreadyRunning ?? null
+    const data = await waitForDirections(client, state.contentId, { timeoutMs: 180_000 })
+    state.record.directions = (data?.plan?.directions ?? []).map((d) => ({
       id: d.id, name: d.name, oneLiner: d.oneLiner, emotion: d.emotion, visualDirection: d.visualDirection,
     }))
   })

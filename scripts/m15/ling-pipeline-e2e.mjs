@@ -28,6 +28,14 @@ async function post(path, body) {
   return { ok: res.ok, status: res.status, json }
 }
 
+async function get(path) {
+  const res = await fetch(`${BASE}${path}`, {
+    headers: { ...(sessionCookie ? { Cookie: sessionCookie } : {}) },
+  })
+  const json = await res.json().catch(() => ({}))
+  return { ok: res.ok, status: res.status, json }
+}
+
 const log = (tag, { ok, status, json }) => {
   const msg = json?.message ?? json?.error ?? ''
   console.log(`[${tag}] HTTP ${status} ${ok ? '✓' : '✗'} ${String(msg).slice(0, 120)}`)
@@ -48,10 +56,19 @@ try {
   const intent = await post(`/api/contents/${contentId}/intent`, { confirm: true })
   log('intent', intent)
 
-  // 3. 方向生成
-  const directions = await post(`/api/contents/${contentId}/directions`)
-  log('directions', directions)
-  const dirList = directions.json?.directions ?? directions.json?.plan?.directions ?? []
+  // 3. 方向生成（025：入队即返 → 轮询出现）
+  const dirRes = await post(`/api/contents/${contentId}/directions`)
+  log('directions-enqueued', dirRes)
+  let dirList = []
+  for (let i = 0; i < 72 && dirList.length === 0; i++) {
+    await new Promise((r) => setTimeout(r, 2500))
+    const probe = await get(`/api/contents/${contentId}/creation`)
+    dirList = probe.json?.plan?.directions ?? []
+    const job = probe.json?.job
+    if (job && (job.status === 'failed' || job.status === 'timeout')) {
+      throw new Error(`方向构思失败：${job.error ?? '未知'}`)
+    }
+  }
   const directionId = dirList?.[0]?.id
   console.log(`  方向数=${Array.isArray(dirList) ? dirList.length : '?'} 取第一个 id=${directionId}\n`)
   if (!directionId) throw new Error('未拿到方向 id')

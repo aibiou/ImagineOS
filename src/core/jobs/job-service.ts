@@ -154,11 +154,20 @@ export const jobService = {
   },
 
   /** 乐观锁 claim：UPDATE ... WHERE status='queued'，并发下只有一个 worker 得手；
-   *  退避窗口内（leaseExpiresAt 在未来）的 requeued Job 不认领——防连续失败重试风暴 */
-  async claimNext(): Promise<{ id: string; type: string; inputJson: string; contentId: string; versionId: string | null; retryCount: number } | null> {
+   *  退避窗口内（leaseExpiresAt 在未来）的 requeued Job 不认领——防连续失败重试风暴。
+   *  类型过滤（025 战线四，双通道 worker）：types = 只领这些类型；excludeTypes = 排除这些类型
+   *  （与 types 互斥，types 优先）；都不传 = 领任意类型（旧行为，既有调用零改动）。 */
+  async claimNext(types?: string[], excludeTypes?: string[]): Promise<{ id: string; type: string; inputJson: string; contentId: string; versionId: string | null; retryCount: number } | null> {
+    const typeFilter =
+      types && types.length > 0
+        ? { type: { in: types } }
+        : excludeTypes && excludeTypes.length > 0
+          ? { type: { notIn: excludeTypes } }
+          : {}
     const candidates = await db.generationJob.findMany({
       where: {
         status: 'queued',
+        ...typeFilter,
         OR: [{ leaseExpiresAt: null }, { leaseExpiresAt: { lt: new Date() } }],
       },
       orderBy: { createdAt: 'asc' },
@@ -218,8 +227,12 @@ export const jobService = {
   },
 
   async complete(jobId: string, output: Record<string, unknown>): Promise<void> {
+    // 条件写（025 战线二）：只允许 claimed/running → succeeded——与 markRunning 同款防线。
+    // 场景：revision.plan Job 被 supersede（用户改了反馈重新提交）后，执行器手里的 LLM
+    // 结果已作废，绝不能把终态 failed 翻回 succeeded（旧代码无条件 update 会翻回）。
     const job = await db.generationJob.findUnique({ where: { id: jobId } })
-    const existing = job?.outputJson ? (JSON.parse(job.outputJson) as Record<string, unknown>) : {}
+    if (!job || (job.status !== 'claimed' && job.status !== 'running')) return
+    const existing = job.outputJson ? (JSON.parse(job.outputJson) as Record<string, unknown>) : {}
     await db.generationJob.update({
       where: { id: jobId },
       data: {
@@ -228,6 +241,17 @@ export const jobService = {
         outputJson: JSON.stringify({ ...existing, ...output }),
       },
     })
+  },
+
+  /** 取代（025 战线二，计算型 Job 并发语义）：直接终态写 failed——不走 fail() 重试路径，
+   *  不传导 Content 失败标记（修订定位不是生成状态机的一环）。
+   *  被 supersede 的 Job 即使执行器稍后返回，complete() 的条件写也翻不回 succeeded。 */
+  async supersede(jobId: string, reason: string): Promise<boolean> {
+    const res = await db.generationJob.updateMany({
+      where: { id: jobId, status: { in: ['queued', 'claimed', 'running'] } },
+      data: { status: 'failed', error: reason.slice(0, 1000), completedAt: new Date() },
+    })
+    return res.count === 1
   },
 
   /** 失败：可重试 → 回队；不可重试/耗尽 → failed + Content 失败标记（错误必须对用户可见） */

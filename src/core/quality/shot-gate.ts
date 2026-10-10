@@ -148,9 +148,12 @@ export function buildVideoGateUserPrompt(facts: GateFacts): string {
 
 // ---------- 变体重抽 prompt（纯函数） ----------
 
-/** 不合格时的变体提示词：问题清单 + 构图/光影重试指令（英文追加——与基底 prompt 同语种） */
-export function variantImagePrompt(basePrompt: string, issues: string[], attempt: number): string {
+/** 不合格时的变体提示词：问题清单 + 景别硬指令 + 构图/光影重试指令（英文追加——与基底 prompt 同语种）。
+ *  025 战线一：framing（英文景别短语，与首抽同源）存在时前置 mandatory 指令——
+ *  重抽必须比首抽更响地重申景别，否则模型大概率复犯（024 镜4 实战教训）。 */
+export function variantImagePrompt(basePrompt: string, issues: string[], attempt: number, framing?: string): string {
   const issueList = issues.slice(0, 4).map((s) => s.trim()).filter(Boolean)
+  const framingLead = framing?.trim() ? `FRAMING (mandatory): ${framing.trim()}. ` : ''
   const nudges = [
     'Recompose the shot with different placement and camera angle.',
     'Adjust lighting and atmosphere while keeping the same story beat.',
@@ -158,7 +161,7 @@ export function variantImagePrompt(basePrompt: string, issues: string[], attempt
   ]
   const nudge = nudges[Math.min(attempt - 1, nudges.length - 1)]!
   const avoid = issueList.length > 0 ? ` MUST avoid these problems from the previous attempt: ${issueList.map((s) => `(${s})`).join(' ')}.` : ''
-  return `${basePrompt}${avoid} ${nudge}`
+  return `${framingLead}${basePrompt}${avoid} ${nudge}`
 }
 
 // ---------- 择优（纯函数） ----------
