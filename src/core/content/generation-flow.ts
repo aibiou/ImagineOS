@@ -158,7 +158,9 @@ export const generationFlow = {
       contentId,
       versionId,
       type: 'video.storyboard',
-      payload: { contentId, versionId, actorId },
+      // 跨 Job 断点续跑：从 GENERATING 失败态入队 = 恢复语义（从未完成镜头续跑，零重烧）；
+      // REVIEW/READY 入队 = 「换一批」全新批次语义（不带标记，整片重画）。
+      payload: { contentId, versionId, actorId, resumeFromFailed: content.status === 'GENERATING' },
     })
     return { versionId, versionNumber: version.versionNumber, jobId: job.id, reusedVersion: true }
   },

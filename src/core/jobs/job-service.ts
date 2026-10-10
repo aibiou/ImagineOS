@@ -29,6 +29,18 @@ export class NonRetryableJobError extends Error {
  *  退避通过 leaseExpiresAt 表达「最早可认领时间」（claimNext 过滤）——SQLite 队列无独立调度字段，复用租约语义。 */
 export const RETRY_BACKOFF_BASE_MS = 15_000
 
+/** 供给枯竭型失败的退避放大系数（gate-e2e 实证 2026-10-10）：
+ *  ProviderExhaustedError（全部候选 429——免费档配额/限流打穿）的恢复时间尺度是分钟级，
+ *  15-45s 退避会在同一堵墙上连撞三次、约 22 分钟烧完全部重试预算；
+ *  放大后 120s/240s/360s，给配额窗口重开的机会（配合跨 Job 打捞，即便耗尽也能只补缺口）。 */
+const SUPPLY_EXHAUSTED_BACKOFF_MULT = 8
+
+/** 供给枯竭信号识别：全部候选 Provider 失败（限流/配额）的链层签名。
+ *  只影响退避节奏，不影响可重试性判定——识别不准的代价是多等一会，不是功能损伤。 */
+function isSupplyExhausted(error: string): boolean {
+  return error.includes('全部候选 Provider 失败') || /HTTP 429|rate.?limit|Too many requests/i.test(error)
+}
+
 export interface JobInput {
   contentId: string
   versionId: string | null
@@ -225,7 +237,12 @@ export const jobService = {
     const retryable = opts?.retryable ?? true
     if (retryable && job.retryCount < job.maxRetries) {
       // 退避递增：第 1 次回队 15s 后可再认领，之后 30s/45s…（防 1 秒内烧完全部重试）
-      const backoffMs = RETRY_BACKOFF_BASE_MS * (job.retryCount + 1)
+      // 供给枯竭（全部候选 429）：分钟级窗口——退避放大 ×8（120s/240s/360s），等窗口重开而非连撞
+      const exhausted = isSupplyExhausted(error)
+      const backoffMs =
+        RETRY_BACKOFF_BASE_MS *
+        (job.retryCount + 1) *
+        (exhausted ? SUPPLY_EXHAUSTED_BACKOFF_MULT : 1)
       await db.generationJob.update({
         where: { id: jobId },
         data: {

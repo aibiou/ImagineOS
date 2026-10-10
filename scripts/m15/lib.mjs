@@ -115,7 +115,9 @@ function stamp(state, phase, sinceKey) {
 
 // ---------------- 轮询 ----------------
 
-/** 等待 content.status 达到 target；job 失败提前抛错 */
+/** 等待 content.status 达到 target；job 失败提前抛错（但目标已达优先——
+ *  creation API 的 job 字段在无活跃 Job 时会返回历史失败 Job（失败横幅数据源），
+ *  跨 Job 打捞恢复后内容可能已达目标，历史失败不是当下的致命信号） */
 export async function waitForStatus(client, contentId, target, { timeoutMs = 600_000, intervalMs = 3000, onTick } = {}) {
   const start = Date.now()
   let last = null
@@ -123,10 +125,10 @@ export async function waitForStatus(client, contentId, target, { timeoutMs = 600
     const data = await client.get(`/api/contents/${contentId}/creation`)
     last = data
     if (onTick) onTick(data)
+    if (data.content.status === target) return data
     if (data.job && (data.job.status === 'failed' || data.job.status === 'timeout')) {
       throw new Error(`Job 失败：${data.job.type} ${JSON.stringify(data.job).slice(0, 400)}`)
     }
-    if (data.content.status === target) return data
     await sleep(intervalMs)
   }
   throw new Error(`等待 ${target} 超时（>${timeoutMs}ms）；最后状态：${last?.content?.status} job=${JSON.stringify(last?.job).slice(0, 300)}`)
@@ -292,19 +294,29 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
     state.record.selectedDirectionId = chosen.id
   })
 
-  // 5) story
+  // 5) story（规划层 Job 化：入队即返回 → 轮询等 STORY；与 ux-plan-async-022 服务端形态对齐）
   await step(state, client, caseId, 'selected', 'story', 'PLANNING', async () => {
     const res = await client.post(`/api/contents/${state.contentId}/story`, {})
-    state.record.storyLogline = res.story?.logline ?? null
-    state.record.storyArc = res.story?.arc ?? null
+    state.record.storyJobId = res.jobId ?? null
   })
+  if (state.phase === 'story') {
+    await waitForStatus(client, state.contentId, 'STORY', { timeoutMs: 420_000 })
+    const data = await client.get(`/api/contents/${state.contentId}/creation`)
+    state.record.storyLogline = data.story?.logline ?? null
+    state.record.storyArc = data.story?.arc ?? null
+    persist()
+  }
 
-  // 6) storyboard
+  // 6) storyboard（同上：入队即返回 → 轮询等 STORYBOARD）
   await step(state, client, caseId, 'story', 'storyboard', 'STORY', async () => {
     const res = await client.post(`/api/contents/${state.contentId}/storyboard`, {})
-    state.record.storyboard = summarizeStructure({ story: res.story })
-    state.record.shotCountFromApi = res.shots ?? null
+    state.record.storyboardJobId = res.jobId ?? null
   })
+  if (state.phase === 'storyboard') {
+    const data = await waitForStatus(client, state.contentId, 'STORYBOARD', { timeoutMs: 600_000 })
+    state.record.storyboard = data.story ? summarizeStructure({ story: data.story }) : null
+    persist()
+  }
 
   // 7) generate → REVIEW
   await step(state, client, caseId, 'storyboard', 'generating', 'STORYBOARD', async () => {
@@ -315,15 +327,15 @@ export async function driveCase(client, caseId, { text, description, preferKeywo
 
   if (state.phase === 'generating') {
     // 失败恢复入口（M1.5 缺陷修复②的脚本侧闭环）：
-    // 僵死态判定 = GENERATING + 无活跃 Job。creation API 的 job 字段来自 activeJobForContent
-    // （仅返回 queued/claimed/running），failed/timeout 的 Job 不会返回——旧判断
-    // probe.job.status === 'failed' 永远无法命中，导致 429 重试耗尽后的案例干等 900s 超时
-    // （2026-10-06 p10 复盘根因）。regenerate API 已接受 GENERATING 态（assertNoActiveJob
-    // 只挡活跃 Job，failed 不挡）——同 Version 换新 Job。
+    // 僵死态判定 = GENERATING + (无 Job | Job 已 failed/timeout)。creation API 会把最近失败
+    // Job 暴露在 job 字段（失败横幅 UI 数据源），所以「无活跃 Job」要看 status 而非字段存在性。
+    // regenerate API 已接受 GENERATING 态（assertNoActiveJob 只挡活跃 Job）——同 Version 换新 Job
+    // （服务端跨 Job 打捞：payload.resumeFromFailed=true，只补缺口不重烧）。
     const probe = await client.get(`/api/contents/${state.contentId}/creation`)
-    const stalled = !probe.job && probe.content?.status === 'GENERATING'
+    const jobDead = !probe.job || probe.job.status === 'failed' || probe.job.status === 'timeout'
+    const stalled = jobDead && probe.content?.status === 'GENERATING'
     if (stalled) {
-      console.log(`  [${caseId}] 检测到僵死态（GENERATING 且无活跃 Job），走 regenerate 重入`)
+      console.log(`  [${caseId}] 检测到僵死态（GENERATING 且 Job ${probe.job ? probe.job.status : '缺失'}），走 regenerate 重入`)
       const reg = await client.post(`/api/contents/${state.contentId}/regenerate`, {})
       state.record.generateJobId = reg.jobId
       state.record.recoveredFromFailedJob = { at: new Date().toISOString(), via: 'stalled-generating regenerate' }

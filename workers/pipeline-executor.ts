@@ -51,6 +51,10 @@ interface JobPayload {
   contentId: string
   versionId: string | null
   actorId: string | null
+  /** 跨 Job 断点续跑（供给受限世界的恢复语义）：regenerate 从 GENERATING 失败态入队时置 true——
+   *  执行器将从同版本最近一次失败/超时的 storyboard Job 进度中打捞已完成镜头（只补缺口，不重烧）。
+   *  REVIEW/READY 的「换一批」 regenerate 不携带此标记（语义 = 全新批次，用户主动要求重画）。 */
+  resumeFromFailed?: boolean
 }
 
 function parseJobPayload(inputJson: string): JobPayload {
@@ -64,6 +68,7 @@ function parseJobPayload(inputJson: string): JobPayload {
     contentId: parsed.contentId ?? '',
     versionId: parsed.versionId ?? null,
     actorId: parsed.actorId ?? null,
+    resumeFromFailed: parsed.resumeFromFailed === true,
   }
 }
 
@@ -128,6 +133,39 @@ async function loadPriorEntries(jobId: string): Promise<Map<number, ShotAssetEnt
     }
   } catch { /* 脏载荷容错：当无进度 */ }
   return out
+}
+
+/** 跨 Job 打捞（设计 §3.3 延伸）：失败后「重新生成」的新 Job 从同版本最近失败/超时的
+ *  storyboard Job 进度里恢复已完成镜头——供给受限世界里，用户点「重新生成」的代价
+ *  从「整片重烧」降为「只补缺口」（已成功的 native 视频供给不重烧）。
+ *  逐镜头有效性由 imageTasks 的 A/B 分支照常校验（gate.pass + 资产健在）——
+ *  门挂了的图（如水印镜）不会被复用，会重走质量门。 */
+async function salvagePriorEntriesFromFailedJob(
+  contentId: string,
+  versionId: string | null,
+): Promise<{ entries: Map<number, ShotAssetEntry>; salvagedFromJobId: string | null }> {
+  const failedJob = await db.generationJob.findFirst({
+    where: {
+      contentId,
+      versionId,
+      type: 'video.storyboard',
+      status: { in: ['failed', 'timeout'] },
+    },
+    orderBy: { completedAt: 'desc' },
+  })
+  const out = new Map<number, ShotAssetEntry>()
+  if (!failedJob?.outputJson) return { entries: out, salvagedFromJobId: null }
+  try {
+    const parsed = JSON.parse(failedJob.outputJson) as { shotAssets?: ShotAssetEntry[] }
+    if (Array.isArray(parsed.shotAssets)) {
+      for (const e of parsed.shotAssets) {
+        if (e && typeof e.shotIndex === 'number' && typeof e.imageAssetId === 'string') {
+          out.set(e.shotIndex, e)
+        }
+      }
+    }
+  } catch { /* 脏载荷容错：当无进度 */ }
+  return { entries: out, salvagedFromJobId: failedJob.id }
 }
 
 /** 安全推进（Job 驱动；若 UI 侧已推进到目标态则跳过） */
@@ -234,8 +272,32 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   })
 
   // ---- 断点续跑（设计 §3.3）：失败重入队/用户重试后，从本 Job 已持久化进度恢复——
-  // 只补缺口（无视频补视频、无图补图），绝不整片重烧供给配额
-  const priorEntries = await loadPriorEntries(jobId)
+  // 只补缺口（无视频补视频、无图补图），绝不整片重烧供给配额。
+  // 跨 Job 打捞：新 Job（regenerate 恢复入口）自身无进度时，从同版本最近失败 Job 恢复。
+  const ownPriorEntries = await loadPriorEntries(jobId)
+  let priorEntries = ownPriorEntries
+  let salvagedFromJobId: string | null = null
+  if (ownPriorEntries.size === 0 && payload.resumeFromFailed) {
+    const salvaged = await salvagePriorEntriesFromFailedJob(content.id, version.id)
+    if (salvaged.entries.size > 0) {
+      priorEntries = salvaged.entries
+      salvagedFromJobId = salvaged.salvagedFromJobId
+      await provenanceRepo.append(db, {
+        contentId: content.id,
+        versionId: version.id,
+        eventType: 'ai_generated',
+        actorType: 'system',
+        provider: 'pipeline',
+        model: 'storyboard.resume',
+        payload: {
+          stage: 'resume.salvage',
+          salvagedShots: salvaged.entries.size,
+          salvagedFromJobId: salvaged.salvagedFromJobId,
+          note: '重新生成从未完成镜头续跑（已完成镜头零重烧）',
+        },
+      }).catch(() => {})
+    }
+  }
   const entriesByIndex = new Map<number, ShotAssetEntry>()
   for (const [idx, e] of priorEntries) entriesByIndex.set(idx, { ...e })
   const resumedCount = priorEntries.size
@@ -410,9 +472,11 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     }
 
     // B. 图像：native 断在视频的场景复用已质检图（省图像配额），否则走质量门循环
+    // imageReused 标记：视频复用的前提——图像重画后旧视频首帧已失配，必须连同重生成（首帧一致性铁律）
     let entry: ShotAssetEntry
     let imageBase64: string
     let imageMime: string
+    let imageReused = false
     const priorImageOk = prior?.gate?.pass && prior.imageAssetId != null
     const priorImageAsset = priorImageOk ? await assetService.getById(prior!.imageAssetId).catch(() => null) : null
     if (priorImageAsset) {
@@ -421,6 +485,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
         const buf = await readFile(assetService.resolveLocalPath(priorImageAsset.storageLocation))
         imageBase64 = buf.toString('base64')
         imageMime = priorImageAsset.mime || 'image/png'
+        imageReused = true
       } catch {
         const fresh = await generateGatedImage(shot, i)
         entry = fresh.entry
@@ -444,10 +509,11 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       shotAssets: entriesSnapshot(),
     })
 
-    // C. native 视频：已完成的复用；否则节奏化生成。失败上抛 → Job 可重试失败 → resume 只补本镜
+    // C. native 视频：图像也被复用时才复用旧视频（首帧一致性——图像重画则视频连带重生成）；
+    //    否则节奏化生成。失败上抛 → Job 可重试失败 → resume 只补本镜
     //    （Ken Burns 回落已取缔：宁可诚实失败，绝不静默降级成幻灯片）
     if (motionMode === 'native' && hasVideoShotProvider()) {
-      if (prior?.videoAssetId && (await assetService.getById(prior.videoAssetId).catch(() => null))) {
+      if (imageReused && prior?.videoAssetId && (await assetService.getById(prior.videoAssetId).catch(() => null))) {
         entry.videoAssetId = prior.videoAssetId
         entry.videoGate = prior.videoGate
       } else {
