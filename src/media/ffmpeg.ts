@@ -112,6 +112,20 @@ export async function probeImageSize(path: string): Promise<{ width: number; hei
   }
 }
 
+// ---------- 视频质量门抽帧 ----------
+
+/** 抽取视频中点帧（质量门快审用；JPEG 输出，短横屏/竖屏通吃）。失败抛错由调用方降级 skipped。 */
+export async function extractMidFrame(videoPath: string, outPath: string): Promise<string> {
+  const durationMs = await probeDurationMs(videoPath)
+  const midSec = durationMs && durationMs > 400 ? (durationMs / 1000) / 2 : 1
+  await run(
+    FFMPEG,
+    ['-y', '-ss', String(Math.max(0.2, midSec)), '-i', videoPath, '-frames:v', '1', '-q:v', '3', outPath],
+    { label: 'extract-mid-frame', timeoutMs: 30_000 },
+  )
+  return outPath
+}
+
 // ---------- Ken Burns ----------
 
 function kenBurnsFilter(spec: ComposeSpec, frames: number, motion: ComposeShotInput['cameraMotion']): string {

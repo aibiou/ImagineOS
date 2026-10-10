@@ -4,7 +4,7 @@
 
 // ---------- 能力分类（§29） ----------
 
-export const CAPABILITIES = ['text.plan', 'image.shot', 'audio.tts', 'video.shot', 'video.compose'] as const
+export const CAPABILITIES = ['text.plan', 'image.shot', 'audio.tts', 'video.shot', 'video.compose', 'vision.review'] as const
 export type Capability = (typeof CAPABILITIES)[number]
 
 // ---------- 调用上下文（记账与溯源用） ----------
@@ -51,6 +51,20 @@ export interface ImageShotPayload {
 export interface ImageShotResult {
   base64: string
   mime: string
+  /** 复现参数（同 VideoShotResult.repro；当前图像 provider 无可返回标识，位预留） */
+  repro?: Record<string, unknown>
+}
+
+// vision.review（质量门）：多模态快审——图像 + 文本指令 → 评审文本（JSON verdict 由调用方解析）
+export interface VisionReviewPayload {
+  system: string
+  user: string
+  /** 参与评审的图像（待审镜头图 / 参考帧 / 视频抽帧，按序注入） */
+  images: Array<{ base64: string; mime?: string }>
+}
+
+export interface VisionReviewResult {
+  text: string
 }
 
 export interface AudioTTSPayload {
@@ -83,6 +97,9 @@ export interface VideoShotResult {
   base64: string
   mime: string
   durationMs?: number
+  /** 复现参数（seed 位的诚实设计）：provider 返回的一切可重放标识（agnes video_id / zai task id /
+   *  未来任何 provider 的 seed）——router 记入 Generation.output，供范例库重放 */
+  repro?: Record<string, unknown>
 }
 
 // video.compose 的 Payload/Result 由 src/media 合成器定义（组合式管线，ADR-0001），
@@ -118,7 +135,12 @@ export interface VideoShotProvider extends BaseProvider {
   execute(payload: VideoShotPayload, ctx: ProviderCallContext): Promise<VideoShotResult>
 }
 
-export type AnyProvider = TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider
+export interface VisionReviewProvider extends BaseProvider {
+  capability: 'vision.review'
+  execute(payload: VisionReviewPayload, ctx: ProviderCallContext): Promise<VisionReviewResult>
+}
+
+export type AnyProvider = TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider | VisionReviewProvider
 
 // ---------- 路由结果（带执行元数据） ----------
 

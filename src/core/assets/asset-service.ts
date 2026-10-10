@@ -2,6 +2,7 @@
 // 生成产物（图像/音频/视频/封面）的唯一入口：hash → 去重 → 存储 → Asset 行。
 // 不变量：Asset 唯一 [hash, kind]（重试幂等，T6.1.2）
 import { createHash } from 'node:crypto'
+import { Prisma } from '@prisma/client'
 import { db } from '@/lib/db'
 import { diskStorage } from '@/infra/storage'
 
@@ -95,20 +96,44 @@ export const assetService = {
     }
 
     await diskStorage.put(key, input.data)
-    const row = await db.asset.create({
-      data: {
-        contentId: input.contentId,
-        ownerId: input.ownerId,
-        kind: input.kind,
-        mime,
-        hash,
-        storageLocation: key,
-        durationMs: input.durationMs ?? null,
-        width: input.width ?? null,
-        height: input.height ?? null,
-        sizeBytes: input.data.length,
-      },
-    })
+    let row: { id: string; mime: string; storageLocation: string; durationMs: number | null; width: number | null; height: number | null; sizeBytes: number | null; reused?: boolean }
+    try {
+      row = await db.asset.create({
+        data: {
+          contentId: input.contentId,
+          ownerId: input.ownerId,
+          kind: input.kind,
+          mime,
+          hash,
+          storageLocation: key,
+          durationMs: input.durationMs ?? null,
+          width: input.width ?? null,
+          height: input.height ?? null,
+          sizeBytes: input.data.length,
+        },
+      })
+    } catch (e) {
+      // 并发幂等竞态（生产实证 2026-10-10）：并行镜头任务保存同字节产物（如同模板视频）时，
+      // 「先查后建」双双未命中 → 双建撞唯一约束 [hash,kind]。兜底：回读复用（存储层 put 同 key 幂等）。
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        const winner = await db.asset.findFirst({ where: { hash, kind: input.kind } })
+        if (winner) {
+          return {
+            id: winner.id,
+            kind: input.kind,
+            mime: winner.mime,
+            hash,
+            storageLocation: winner.storageLocation,
+            durationMs: winner.durationMs,
+            width: winner.width,
+            height: winner.height,
+            sizeBytes: winner.sizeBytes,
+            reused: true,
+          }
+        }
+      }
+      throw e
+    }
     return {
       id: row.id,
       kind: input.kind,

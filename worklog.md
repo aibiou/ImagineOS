@@ -822,3 +822,26 @@ Stage Summary:
 - 架构一致性：规划层异步化完全复用既有 Job 基建（乐观锁/退避/看门狗/lastError 铁律），零新机制；§53「绝不长请求挂生成」从此覆盖全链路（生成/渲染/故事/分镜）
 - 幂等与配额保护：双击/刷新/断连重连均不重复入队（activeJob 复用 + 状态守卫 + fireOnce），免费配额不再被无意烧掉
 - 已知边界：directions/intent/revision-plan 仍是同步 LLM 等待（已加超时保险与叙事卡，分钟级场景未来可平移本次 Job 化范式）；worker 单循环串行执行规划 Job（单用户 Alpha 无影响，多用户需评估）
+
+---
+Task ID: quality-repro-023
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「继续优化产品级」——环境恢复 + 持续复现好作品能力建设（先设计后动手）：P0 质量门 + P1 复现资产/范例库 + 取缔 Ken Burns 回落（RPM=1 正面解法）
+
+Work Log:
+- 环境恢复：本环境文件系统只剩 Phase 0-2 文档地基（应用代码不在本地）——用产品负责人提供的 token 核实远端 aibiou/ImagineOS main=21b8644（ux-plan-async-022，181 测试）后 hard-align 恢复；bun install + prisma generate/db push + 181/181 基线全绿；供给配置按 worklog 019/022 现场记录恢复（agnes-com 三通道 agnes-3.0-flash/agnes-image-2.5-flash/agnes-video-2.5-flash priority=10 + ant-ling Ling-3.1-flash priority=5，新表 ModelProvider/ModelProviderModel），LLM 双连接实测 ✅（3711ms/470ms）
+- 设计先行（用户纪律「设计好再动手」）：docs/design/quality-reproduction.md 落盘——四层能力模型缺口（画面质感层靠抽卡/经验复利层不存在）+ 三机制咬合设计（质量门/节奏化供给/范例沉淀）+ 预注册验收标准
+- P0 质量门：新能力 vision.review（types + zai-vision provider createVision + registry router.vision()，链/重试/冷却/记账与四能力同构）；src/core/quality/shot-gate.ts 纯函数核心（Zod verdict/综合分权重 0.3-0.25-0.25-0.2/水印一票否决/择优保留=有界 best-of-3/变体重抽 prompt/评审上下文与 shot-prompt 同源同锚点）；src/ai/quality/vision-review.ts 编排壳（架构边界：core 零 AI 依赖，eslint 守卫通过）
+- 管线集成：图像生成后 in-loop 快审 → 预算内（≤2 次）变体重抽择优入库 → Provenance quality-gate 事件 + shotAssets.gate 摘要（前端 GENERATING/REVIEW 两处质检徽章「质检 ✓ 8.4」诚实可见，skipped 如实标注）；视频抽中点帧（ffmpeg extractMidFrame）快审：水印/黑帧/人物突变严格门（1 次重试预算）→ 仍败诚实失败，软性指标只记录
+- 取缔 Ken Burns：pipeline-executor 的 native 失败→composition 静默回落整段删除；RPM=1 正面解法 = video-pacer.ts 节奏化提交（serializer 互斥 + 提交间隔下限 61s 动态 env，429 从常态变意外）+ 断点续跑（Job outputJson 恢复：整镜完成跳过/仅图无视频只补视频/TTS 复用，失败重试绝不整片重烧）+ 并发批次 allSettled（失败前抢救快照，绝不留漂浮任务）
+- P1 复现资产：Generation 记账升级（promptHash/firstFrameHash sha256 前 16 位 + result.repro 复现参数位——agnes video_id/zai taskId 落账，seed 位诚实预留）；ShotExemplar 新表（高分镜头 ≥8.0 沉淀：promptJson 完整快照 + promptHash 跨表匹配 + 幂等保最佳）+ 质量门参考帧注入（同片最近高分镜头做一致性比对——经验复利闭环）
+- 顺带修复两处生产缺陷：asset-service.save 并发同字节撞 [hash,kind] 唯一约束（P2002 兜底回读复用，测试实证复现）；门内循环误删临时目录导致后续镜头抽帧 ENOENT
+- 测试：新增 4 文件 31 例（shot-quality-gate 13 / video-pacing 7 / exemplar-service 6 / storyboard-resume 3——含全 native 诚实失败→续跑零重烧的端到端断言、水印严格门、fake vision 注入零触网）→ 全量 212/212；tsc 0 错；eslint 0 错；dev server 冒烟 200 零错误
+- 度量与脚本：scripts/m15/gate-metrics.mjs（一次通过率/重抽分布/平均分/repro 覆盖率/零回落事件恒 0 的验收口径）；restore-provider-config.mjs + probe-new-providers.mjs（环境恢复工具化）
+
+Stage Summary:
+- 质量门 in-loop 落地：单镜从「抽卡入库」升级为「快审-重抽-择优」，画面质感层首次可度量、可迭代（gate-metrics 基线数字就绪）
+- Ken Burns 回落取缔兑现：宁可诚实失败+断点续跑（已完成镜头零重烧），绝不静默降级幻灯片；RPM=1 供给经节奏化对齐后 429 变意外
+- 经验复利层首块落地：高分镜头自动沉淀 ShotExemplar（prompt 快照+哈希），质量门参考帧形成同片一致性自增强回路；Generation repro/promptHash 让「好镜头怎么写出来的」完整可回放
+- 架构一致性：vision.review 走同一 Router（重试/冷却/记账/未来自定义 VLM 可插拔）；core/quality 纯函数零 AI 依赖（§87 边界 eslint 守卫全绿）
+- 已知边界：跨项目风格 few-shot 与图像 seed 重放留待后续（数据积累+provider 暴露后）；E2E 真实全 native 走查待真实管线下一轮跑（本轮单测已锁定语义）

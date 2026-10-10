@@ -33,6 +33,7 @@ export const zaiVideoProvider: VideoShotProvider = {
 
     const taskId = created?.id
     if (!taskId) throw new Error('视频生成任务提交失败（未返回任务 id）')
+    const repro: Record<string, unknown> = { taskId, quality: payload.speedFirst === false ? 'quality' : 'speed' }
 
     // ---- 2. 轮询任务状态 ----
     const deadline = Date.now() + POLL_DEADLINE_MS
@@ -53,7 +54,7 @@ export const zaiVideoProvider: VideoShotProvider = {
         if (!res.ok) throw new Error(`视频下载失败：HTTP ${res.status}`)
         const buf = Buffer.from(await res.arrayBuffer())
         if (buf.length < 10_000) throw new Error('视频下载内容过小（疑似无效响应）')
-        return { base64: buf.toString('base64'), mime: 'video/mp4' }
+        return { base64: buf.toString('base64'), mime: 'video/mp4', repro }
       }
       if (Date.now() > deadline) throw new Error(`视频生成轮询超时（>${POLL_DEADLINE_MS}ms，任务 ${taskId}）`)
     }

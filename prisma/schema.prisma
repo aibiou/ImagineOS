@@ -106,6 +106,7 @@ model Content {
   assets       Asset[]
   generations  Generation[]
   jobs         GenerationJob[]
+  exemplars    ShotExemplar[]
   permissions  Permission[]
   provenance   Provenance[]
   publication  Publication?
@@ -287,6 +288,29 @@ model GenerationJob {
 
   @@index([status, createdAt])
   @@index([contentId])
+}
+
+// ============================ 经验复利层（质量门高分镜头沉淀，2026-10-10） ============================
+
+// ShotExemplar：通过质量门且综合分 ≥ 阈值（默认 8.0）的镜头自动沉淀——「好镜头是怎么写出来的」
+// 完整可回放（promptHash 精确匹配 + promptJson 快照 + 评分）。当前消费：质量门参考帧（同片跨镜
+// 一致性比对）；未来：跨项目风格 few-shot、seed 重放（等 provider 暴露）。
+// 幂等口径：同 content + shotIndex 取最高分覆盖（upsert）。
+model ShotExemplar {
+  id         String   @id @default(cuid())
+  contentId  String
+  content    Content  @relation(fields: [contentId], references: [id], onDelete: Cascade)
+  versionId  String?
+  assetId    String // 已落库镜头图资产（引用不复制；资产被回收时由调用方容错）
+  shotIndex  Int
+  promptHash String // imagePrompt 全量 sha256 前 16 位（与 Generation.inputJson.promptHash 同口径）
+  promptJson String // 完整 imagePrompt + 锚点/lookBook 快照（复现地基）
+  scoreJson  String // 质量门评分快照（verdict 摘要）
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([contentId, shotIndex])
+  @@index([contentId, createdAt])
 }
 
 // ============================ 信任与传播层 ============================

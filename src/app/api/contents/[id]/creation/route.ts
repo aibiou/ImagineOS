@@ -83,12 +83,12 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
           assets.poster = { url: assetUrl(parsed.posterAssetId) }
         }
       }
-      // 分镜图像（最近一次成功的 storyboard）
+      // 分镜图像（最近一次成功的 storyboard）——含质量门摘要（诚实徽章数据源）
       const sbJob = await jobService.latestSucceededJob(id, versionId, 'video.storyboard')
       if (sbJob?.outputJson) {
         generationMode = computeGenerationMode(sbJob.outputJson)
         const parsed = JSON.parse(sbJob.outputJson) as {
-          shotAssets?: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string; videoAssetId?: string }>
+          shotAssets?: Array<{ shotIndex: number; imageAssetId: string; ttsAssetId?: string; videoAssetId?: string; gate?: { pass: boolean; skipped: boolean; score: number | null; attempts: number; issues?: string[] } }>
         }
         const entries = parsed.shotAssets ?? []
         const ids = entries.flatMap((e) => [e.imageAssetId, ...(e.ttsAssetId ? [e.ttsAssetId] : [])])
@@ -100,6 +100,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             shotIndex: e.shotIndex,
             imageUrl: byId.has(e.imageAssetId) ? assetUrl(e.imageAssetId) : null,
             audioUrl: e.ttsAssetId && byId.has(e.ttsAssetId) ? assetUrl(e.ttsAssetId) : null,
+            gate: e.gate ?? undefined,
           }))
       }
     }
@@ -109,7 +110,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
     // 历史资产（regenerate 场景显示本轮渐进，而非上一轮旧图）
     if (activeJob?.type === 'video.storyboard' && activeJob.outputJson) {
       const progress = JSON.parse(activeJob.outputJson) as {
-        shotAssets?: Array<{ shotIndex: number; imageAssetId: string }>
+        shotAssets?: Array<{ shotIndex: number; imageAssetId: string; gate?: { pass: boolean; skipped: boolean; score: number | null; attempts: number; issues?: string[] } }>
       }
       const partial = Array.isArray(progress.shotAssets) ? progress.shotAssets : []
       if (partial.length > 0) {
@@ -122,6 +123,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
             shotIndex: e.shotIndex,
             imageUrl: byId.has(e.imageAssetId) ? assetUrl(e.imageAssetId) : null,
             audioUrl: null,
+            gate: e.gate ?? undefined,
           }))
       }
     }

@@ -390,6 +390,13 @@ async function executeVideoAgnes(
   }
   const videoId = submitJson?.video_id ?? submitJson?.id ?? submitJson?.task_id
   if (!videoId) throw new Error(`[自定义视频 ${row.label}] 提交成功但未返回 video_id（协议形态可能变化）`)
+  // 复现参数（seed 位）：video_id + 提交参数——落 Generation.output，供重放/对账
+  const repro: Record<string, unknown> = {
+    videoId,
+    seconds: agnesSeconds(payload.durationSec),
+    aspect_ratio: agnesAspectRatio(payload.size),
+    mode: 'keyframe',
+  }
 
   // 2. 轮询（GET {origin}/agnesapi?video_id=…&model_name=…）
   let origin = ''
@@ -408,7 +415,7 @@ async function executeVideoAgnes(
       }
       const dl = await downloadMedia(videoUrl, row.apiKey, 240_000)
       if (dl.bytes.length < 10_000) throw new Error(`[自定义视频 ${row.label}] 视频内容过短（${dl.bytes.length} 字节）`)
-      return { base64: dl.bytes.toString('base64'), mime: 'video/mp4' }
+      return { base64: dl.bytes.toString('base64'), mime: 'video/mp4', repro }
     }
     if (s === 'FAILED' || s === 'ERROR' || s === 'CANCELED') {
       const errMsg = extractJsonError(sj) ?? sj?.message ?? (typeof sj?.error === 'string' ? sj.error : JSON.stringify(sj).slice(0, 200))
@@ -468,7 +475,7 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
           }
           const dl = await downloadMedia(videoUrl, row.apiKey, 240_000)
           if (dl.bytes.length < 10_000) throw new Error(`[自定义视频 ${row.label}] 视频内容过短（${dl.bytes.length} 字节）`)
-          return { base64: dl.bytes.toString('base64'), mime: 'video/mp4' }
+          return { base64: dl.bytes.toString('base64'), mime: 'video/mp4', repro: { requestId } }
         }
         if (s === 'FAILED' || s === 'ERROR' || s === 'CANCELED') {
           const errMsg = extractJsonError(sj) ?? (typeof sj?.error === 'string' ? sj.error : JSON.stringify(sj).slice(0, 200))

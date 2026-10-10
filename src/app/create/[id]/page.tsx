@@ -70,7 +70,7 @@ interface CreationBundle {
   assets: {
     final: { url: string; durationMs: number | null } | null
     poster: { url: string } | null
-    shots: Array<{ shotIndex: number; imageUrl: string | null; audioUrl: string | null }>
+    shots: Array<{ shotIndex: number; imageUrl: string | null; audioUrl: string | null; gate?: { pass: boolean; skipped: boolean; score: number | null; attempts: number; issues?: string[] } }>
   }
   generationMode: { mode: string; nativeShots: number; totalShots: number } | null
   remixOf: { sourceContentId: string; sourceVersionId: string } | null
@@ -1242,6 +1242,39 @@ function GenerationFailedStage({
   )
 }
 
+// ---------- 质量门徽章（诚实可见：通过带分数 / 跳过如实标注 / 未过不掩饰） ----------
+
+function GateBadge({ gate }: { gate: NonNullable<CreationBundle['assets']['shots'][number]['gate']> }) {
+  if (gate.skipped) {
+    return (
+      <span
+        title="质检服务暂不可用，本镜未经评审（已如实标注，不影响成片）"
+        className="absolute bottom-1 left-1 rounded-full border border-zinc-500/30 bg-black/70 px-1.5 py-0.5 text-[9px] text-zinc-400 backdrop-blur"
+      >
+        质检跳过
+      </span>
+    )
+  }
+  const pass = gate.pass
+  const score = gate.score != null ? gate.score.toFixed(1) : null
+  return (
+    <span
+      title={
+        pass
+          ? `质检通过${score ? `（综合 ${score} 分${gate.attempts > 1 ? `，择优自 ${gate.attempts} 次尝试` : ''}）` : ''}`
+          : `质检未过${score ? `（综合 ${score} 分）` : ''}${gate.issues?.length ? `：${gate.issues.join('；')}` : ''}——已保留最佳尝试，可在下方「重新生成」重试`
+      }
+      className={`absolute bottom-1 left-1 rounded-full border px-1.5 py-0.5 text-[9px] backdrop-blur ${
+        pass
+          ? 'border-emerald-400/30 bg-emerald-500/20 text-emerald-300'
+          : 'border-amber-400/30 bg-amber-500/20 text-amber-300'
+      }`}
+    >
+      {pass ? `质检 ${score ?? '✓'}` : `质检未过 ${score ?? ''}`.trim()}
+    </span>
+  )
+}
+
 // ---------- GENERATING / RENDERING：进度 ----------
 
 function GeneratingStage({
@@ -1269,6 +1302,7 @@ function GeneratingStage({
             ? 100
             : 8
   const imageByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.imageUrl]))
+  const gateByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.gate]))
 
   return (
     <motion.section initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="space-y-6">
@@ -1305,6 +1339,7 @@ function GeneratingStage({
                       <div className="size-4 animate-pulse rounded-full bg-zinc-700" />
                     </div>
                   )}
+                  {gateByIndex.get(i) && <GateBadge gate={gateByIndex.get(i)!} />}
                 </div>
               )
             })}
@@ -1339,6 +1374,7 @@ function ReviewStage({
 }) {
   const imageByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.imageUrl]))
   const audioByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.audioUrl]))
+  const gateByIndex = new Map(shotImages.map((s) => [s.shotIndex, s.gate]))
   const modeLabel = generationModeLabel(generationMode?.mode, generationMode?.nativeShots, generationMode?.totalShots)
   const modeDesc = generationMode ? GENERATION_MODE_DESC[generationMode.mode] : undefined
   return (
@@ -1370,6 +1406,7 @@ function ReviewStage({
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-xs text-zinc-600">生成中…</div>
               )}
+              {gateByIndex.get(i) && <GateBadge gate={gateByIndex.get(i)!} />}
             </div>
             <div className="min-w-0 flex-1 py-3 pr-4">
               <div className="flex items-center gap-2 text-[11px] text-zinc-500">

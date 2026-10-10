@@ -9,10 +9,12 @@
 // 测试注入口：registerProvider() 允许用 fake provider 整链替换，绝不触网。
 
 import { generationLog } from '@/ai/router/generation-log'
+import { createHash } from 'node:crypto'
 import { zaiLlmProvider } from '@/ai/providers/zai-llm'
 import { zaiImageProvider } from '@/ai/providers/zai-image'
 import { zaiTtsProvider } from '@/ai/providers/zai-tts'
 import { zaiVideoProvider } from '@/ai/providers/zai-video'
+import { zaiVisionProvider } from '@/ai/providers/zai-vision'
 import { readProviderConfigs, type ProviderConfigRow } from '@/ai/router/provider-config'
 import { buildProviderFromConfig } from '@/ai/providers/openai-compat'
 import {
@@ -30,6 +32,9 @@ import {
   type VideoShotPayload,
   type VideoShotProvider,
   type VideoShotResult,
+  type VisionReviewPayload,
+  type VisionReviewProvider,
+  type VisionReviewResult,
 } from '@/ai/router/types'
 
 // ---------- 注册表 ----------
@@ -37,16 +42,19 @@ import {
 const textPlanChain: TextPlanProvider[] = [zaiLlmProvider]
 const imageShotChain: ImageShotProvider[] = [zaiImageProvider]
 const audioTtsChain: AudioTTSProvider[] = [zaiTtsProvider]
-// video.shot（M1.5 Gate 6）：原生视频链；未注册任何 provider 时管线回落组合式（Ken Burns）
+// video.shot（M1.5 Gate 6）：原生视频链；产品默认 native-first，供给不足走诚实失败（不再回落 Ken Burns）
 const videoShotChain: VideoShotProvider[] = [zaiVideoProvider]
+// vision.review（质量门）：内置 zai-vision；自定义 provider 暂无视觉模型，架构位留好
+const visionReviewChain: VisionReviewProvider[] = [zaiVisionProvider]
 
 /** 测试/扩展用：向能力链注册 provider（不指定位置则置为候选首位） */
 export function registerProvider(provider: TextPlanProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(provider: ImageShotProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(provider: AudioTTSProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(provider: VideoShotProvider, opts?: { prepend?: boolean }): void
+export function registerProvider(provider: VisionReviewProvider, opts?: { prepend?: boolean }): void
 export function registerProvider(
-  provider: TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider,
+  provider: TextPlanProvider | ImageShotProvider | AudioTTSProvider | VideoShotProvider | VisionReviewProvider,
   opts?: { prepend?: boolean },
 ): void {
   const prepend = opts?.prepend ?? true
@@ -79,6 +87,13 @@ export function registerProvider(
       else videoShotChain.push(provider)
       break
     }
+    case 'vision.review': {
+      const i = visionReviewChain.findIndex((p) => p.id === provider.id)
+      if (i >= 0) visionReviewChain[i] = provider
+      else if (prepend) visionReviewChain.unshift(provider)
+      else visionReviewChain.push(provider)
+      break
+    }
   }
 }
 
@@ -92,6 +107,8 @@ export function resetRegistry(): void {
   audioTtsChain.push(zaiTtsProvider)
   videoShotChain.length = 0
   videoShotChain.push(zaiVideoProvider)
+  visionReviewChain.length = 0
+  visionReviewChain.push(zaiVisionProvider)
   clearRateState()
 }
 
@@ -101,7 +118,13 @@ export function clearRegistry(): void {
   imageShotChain.length = 0
   audioTtsChain.length = 0
   videoShotChain.length = 0
+  visionReviewChain.length = 0
   clearRateState()
+}
+
+/** 测试/评估用：当前 vision.review 链是否有可用 provider（质量门可用性探测） */
+export function hasVisionReviewProvider(): boolean {
+  return visionReviewChain.length > 0
 }
 
 /** 测试/评估用：当前 video.shot 链是否有可用 provider（无则管线回落组合式） */
@@ -214,6 +237,11 @@ async function ensureChainsFresh(): Promise<void> {
 const MAX_ATTEMPTS_PER_PROVIDER = 3
 const BASE_BACKOFF_MS = 600
 
+/** sha256 前 16 位（prompt/首帧的精确复现匹配错错不了） */
+function sha256Prefix(text: string): string {
+  return createHash('sha256').update(text).digest('hex').slice(0, 16)
+}
+
 /** 确定性失败（密钥/参数错误）不重试——立即切换下一候选，省去指数退避等待 */
 function isNonRetryable(e: unknown): boolean {
   const msg = e instanceof Error ? e.message : String(e)
@@ -319,17 +347,28 @@ function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
   ])
 }
 
-/** 账本输入摘要：提取 payload.prompt（截断 4000 字）+ payload.size（画幅尺寸声明）——
+/** 账本输入摘要：prompt（截断 4000 字）+ size + promptHash（全量 sha256 前 16 位，复现精确匹配）+
+ *  video 首帧哈希（图生视频首帧的一致性证据）+ vision 图像张数（绝不落 base64）——
  *  世界一致性注入与画幅声明是否真的发生在调用时刻的直接证据 */
 function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined {
-  if (typeof payload === 'object' && payload !== null && 'prompt' in payload) {
-    const summary: Record<string, unknown> = {}
-    const v = (payload as { prompt?: unknown }).prompt
-    if (typeof v === 'string' && v.length > 0) summary.prompt = v.length > 4000 ? `${v.slice(0, 4000)}…` : v
-    const s = (payload as { size?: unknown }).size
-    if (typeof s === 'string' && s.length > 0) summary.size = s
-    return Object.keys(summary).length > 0 ? summary : undefined
+  if (typeof payload !== 'object' || payload === null) return undefined
+  const p = payload as Record<string, unknown>
+  const summary: Record<string, unknown> = {}
+  if (typeof p.prompt === 'string' && p.prompt.length > 0) {
+    summary.prompt = p.prompt.length > 4000 ? `${p.prompt.slice(0, 4000)}…` : p.prompt
+    summary.promptHash = sha256Prefix(p.prompt)
   }
+  if (typeof p.size === 'string' && p.size.length > 0) summary.size = p.size
+  if (typeof p.imageUrl === 'string' && p.imageUrl.length > 0) summary.firstFrameHash = sha256Prefix(p.imageUrl)
+  if (Array.isArray(p.images)) summary.images = p.images.length
+  return Object.keys(summary).length > 0 ? summary : undefined
+}
+
+/** 账本输出摘要：结果携带的复现参数（agnes video_id / zai task id / 未来 seed 位） */
+function resultSummaryOf(result: unknown): Record<string, unknown> | undefined {
+  if (typeof result !== 'object' || result === null) return undefined
+  const repro = (result as { repro?: unknown }).repro
+  if (repro && typeof repro === 'object') return { repro }
   return undefined
 }
 
@@ -339,6 +378,7 @@ const TIMEOUTS: Record<string, number> = {
   'image.shot': 180_000,
   'audio.tts': 120_000,
   'video.shot': 330_000, // 含提交+轮询+下载（provider 内部 5min 轮询上限 + 余量）
+  'vision.review': 90_000, // 多模态快审（图像上传 + 推理；重试由链层夺救）
 }
 
 async function runWithRetry<P, R>(
@@ -367,6 +407,7 @@ async function runWithRetry<P, R>(
         status: 'succeeded',
         purpose: ctx.purpose,
         inputSummary: promptSummaryOf(payload),
+        output: resultSummaryOf(result),
         latencyMs,
       })
       return result
@@ -489,5 +530,23 @@ export const router = {
       }
     }
     throw new ProviderExhaustedError('video.shot', attempts)
+  },
+
+  /** 视觉快审（质量门）：无自定义 VLM 候选，链上仅内置 zai-vision（+ 测试注入） */
+  async vision(
+    payload: VisionReviewPayload,
+    ctx: ProviderCallContext,
+  ): Promise<{ result: VisionReviewResult; providerId: string; model: string }> {
+    if (visionReviewChain.length === 0) throw new ProviderExhaustedError('vision.review', [{ providerId: '(none)', error: '无注册 provider' }])
+    const attempts: Array<{ providerId: string; error: string }> = []
+    for (const provider of [...visionReviewChain]) {
+      try {
+        const result = await runWithRetry('vision.review', provider, payload, ctx)
+        return { result, providerId: provider.id, model: provider.model }
+      } catch (e) {
+        attempts.push({ providerId: provider.id, error: e instanceof Error ? e.message : String(e) })
+      }
+    }
+    throw new ProviderExhaustedError('vision.review', attempts)
   },
 }

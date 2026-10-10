@@ -70,3 +70,6 @@ upload/pasted_image_17913795[0-9]*.jpg
 .scaffold-backup/
 # 测试存储隔离（gate7-foundation-share-012）
 storage-test/
+
+# 工作临时目录（质量门抽帧 / 渲染中间产物）
+/tmp/

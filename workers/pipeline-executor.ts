@@ -10,12 +10,12 @@
 //   - 资产 hash 去重（重试幂等，T6.1.2）
 //   - 绝不靠长 HTTP 请求维持生成（§53）——规划层 LLM 同样入队，前端轮询接续（刷新不丢、不重复烧配额）
 
-import { mkdir } from 'node:fs/promises'
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
 import { router, hasVideoShotProvider } from '@/ai/router/registry'
-import { createCallSerializer } from '@/ai/router/call-serializer'
-import type { ImageSize, ProviderCallContext } from '@/ai/router/types'
+import { createPacedVideoScheduler } from '@/ai/router/video-pacer'
+import type { ImageSize, ProviderCallContext, VideoShotResult } from '@/ai/router/types'
 import { generateStoryDraft, generateStoryboard } from '@/ai/planning/story'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
@@ -29,7 +29,21 @@ import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core
 import { imagePromptFor, videoPromptFor } from '@/core/content/shot-prompt'
 import { aspectRatioOf, imageSizeForAspect, renderDimensionsForAspect, videoSizeForAspect } from '@/core/content/aspect'
 import { motionModeFor, storyboardModeDecision } from '@/core/content/storyboard-mode'
-import { composeVideo, cleanupWorkDir } from '@/media/ffmpeg'
+import {
+  EXEMPLAR_THRESHOLD,
+  compositeScore,
+  gateFactsFor,
+  imageGateEnabled,
+  pickBestAttempt,
+  shouldRegenerate,
+  variantImagePrompt,
+  videoGateEnabled,
+  MAX_VIDEO_REGENS,
+  type GateAttempt,
+} from '@/core/quality/shot-gate'
+import { reviewImage, reviewVideo } from '@/ai/quality/vision-review'
+import { exemplarService } from '@/core/quality/exemplar-service'
+import { composeVideo, cleanupWorkDir, extractMidFrame } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
 import { db } from '@/lib/db'
 
@@ -83,13 +97,38 @@ const MOTION_ENV = {
   forceComposition: process.env.IMAGINEOS_FORCE_COMPOSITION === '1',
 }
 
-/** native 视频调用串行化（模块级：全进程一个队列）。
- *  根因（2026-10-08 E2E 实证）：IMAGE_CONCURRENCY=2 使两镜视频并发提交，而 zai key
- *  视频并发=1——后提交者 429，600ms 退避 3 连烧穿即回落合成（5 镜 4 亡）。串行化后
- *  全镜视频提交排队（提交+轮询+下载全周期互斥）；图像/TTS 并发不变。
- *  图像/视频提示词统一由 shot-prompt 纯函数模块组装（含人物视觉锚点注入）——
- *  执行层确定性增强，不回写密封配方。 */
-const serializeVideoCall = createCallSerializer()
+/** native 视频调用：节奏化串行（设计见 docs/design/quality-reproduction.md §3.2）。
+ *  提交间隔下限（默认 61s，IMAGINEOS_VIDEO_SUBMIT_GAP_MS 可调）与 agnes 免费档 RPM=1 对齐——
+ *  429 从常态变意外（router 内冷却重试继续夺救）；互斥与 FIFO 语义同旧 serializeVideoCall。 */
+const pacedVideoCall = createPacedVideoScheduler()
+
+/** 镜头资产条目（含质量门摘要——前端进度/预览的诚实徽章数据源） */
+interface ShotAssetEntry {
+  shotIndex: number
+  imageAssetId: string
+  videoAssetId?: string
+  ttsAssetId?: string
+  gate?: { pass: boolean; skipped: boolean; score: number | null; attempts: number; issues: string[] }
+  videoGate?: { pass: boolean; skipped: boolean; score: number | null }
+}
+
+/** 断点续跑：读取本 Job 已持久化的进度载荷（fail→requeue 后 outputJson 保留） */
+async function loadPriorEntries(jobId: string): Promise<Map<number, ShotAssetEntry>> {
+  const out = new Map<number, ShotAssetEntry>()
+  const job = await jobService.getJob(jobId)
+  if (!job?.outputJson) return out
+  try {
+    const parsed = JSON.parse(job.outputJson) as { shotAssets?: ShotAssetEntry[] }
+    if (Array.isArray(parsed.shotAssets)) {
+      for (const e of parsed.shotAssets) {
+        if (e && typeof e.shotIndex === 'number' && typeof e.imageAssetId === 'string') {
+          out.set(e.shotIndex, e)
+        }
+      }
+    }
+  } catch { /* 脏载荷容错：当无进度 */ }
+  return out
+}
 
 /** 安全推进（Job 驱动；若 UI 侧已推进到目标态则跳过） */
 async function safeAdvance(contentId: string, to: string, actorId: string | null, note: string) {
@@ -194,81 +233,242 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     payload: { stage: 'mode.decision', ...modeDecision, videoProviderAvailable: hasVideoShotProvider() },
   })
 
-  const shotAssets: Array<{ shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string }> = []
+  // ---- 断点续跑（设计 §3.3）：失败重入队/用户重试后，从本 Job 已持久化进度恢复——
+  // 只补缺口（无视频补视频、无图补图），绝不整片重烧供给配额
+  const priorEntries = await loadPriorEntries(jobId)
+  const entriesByIndex = new Map<number, ShotAssetEntry>()
+  for (const [idx, e] of priorEntries) entriesByIndex.set(idx, { ...e })
+  const resumedCount = priorEntries.size
+  const entriesSnapshot = (): ShotAssetEntry[] =>
+    [...entriesByIndex.values()].sort((a, b) => a.shotIndex - b.shotIndex)
 
-  // ---- 图像 + 可选原生视频（逐镜头；并发 2 提速，进度按完成数上报） ----
+  // ---- 图像（质量门循环）+ 可选原生视频（节奏化 + 无回落） ----
   // 渐进可见（UX 原则五，2026-10-07 用户反馈「怎么黑盒的」）：镜头图片在保存后立即入进度载荷
-  // （shotAssets 快照），前端轮询即刻渲染——图片秒级到达，native 视频（60–250s/镜）后到补齐；
-  // 进度计数 current 口径 = 该镜全部完成（图+视频），进度条不虚高。
+  // （shotAssets 快照），前端轮询即刻渲染——图片秒级到达，native 视频（60–250s/镜，RPM=1 排队下更长）
+  // 后到补齐；进度计数 current 口径 = 该镜全部完成（图+视频），进度条不虚高。
   const IMAGE_CONCURRENCY = 2
   let imageDone = 0
   const imagesStageLabel = (done: number, total: number): string =>
     modeDecision.mode === 'composition'
       ? `正在绘制镜头画面（${done}/${total}）…`
       : `正在生成 AI 视频镜头（${done}/${total}）…`
-  const imageTasks = shots.map((shot, i) => async () => {
-    const { result } = await router.image(
-      { prompt: imagePromptFor(shot, structure), size },
-      { ...ctx, purpose: 'shot.image' },
-    )
+  const gateWorkDir = join(storageRoot(), '..', 'tmp', `gate-${jobId}`)
+  await mkdir(gateWorkDir, { recursive: true })
+
+  /** 图像 + 质量门（预算内变体重抽择优 = 有界 best-of-N）；参考帧 = 同片高分范例 */
+  async function generateGatedImage(
+    shot: ShotSnapshot,
+    i: number,
+  ): Promise<{ entry: ShotAssetEntry; imageBase64: string; imageMime: string }> {
+    const basePrompt = imagePromptFor(shot, structure)
+    const facts = gateFactsFor(shot, structure)
+    const reference = imageGateEnabled() ? await exemplarService.latestReferenceFor(content.id).catch(() => null) : null
+    const attempts: GateAttempt[] = []
+    let prompt = basePrompt
+    for (let attempt = 1; ; attempt++) {
+      const { result } = await router.image({ prompt, size }, { ...ctx, purpose: 'shot.image' })
+      const verdict = imageGateEnabled() ? await reviewImage(result.base64, result.mime, facts, reference, ctx) : null
+      attempts.push({ imageBase64: result.base64, mime: result.mime, verdict })
+      if (!imageGateEnabled()) break // 门关闭：单次直过（评估对照模式）
+      if (!shouldRegenerate(attempts)) break
+      const lastIssues = attempts[attempts.length - 1]!.verdict?.issues ?? []
+      prompt = variantImagePrompt(basePrompt, lastIssues, attempt)
+    }
+    const { best, skipped } = pickBestAttempt(attempts)
+    const bestVerdict = best.verdict
+    const score = bestVerdict != null ? compositeScore(bestVerdict) : null
+    const gateInfo = {
+      pass: skipped || !imageGateEnabled() ? true : (bestVerdict?.pass ?? true),
+      skipped: skipped || !imageGateEnabled(),
+      score,
+      attempts: attempts.length,
+      issues: bestVerdict?.issues ?? [],
+    }
     const imageAsset = await assetService.save({
+      contentId: content.id,
+      ownerId: content.ownerId,
+      kind: 'generated',
+      data: Buffer.from(best.imageBase64, 'base64'),
+      declaredMime: best.mime,
+    })
+    // 范例沉淀（经验复利层）：高分镜头「怎么写出来的」完整可回放
+    if (imageGateEnabled() && bestVerdict && score != null && score >= EXEMPLAR_THRESHOLD) {
+      await exemplarService
+        .recordIfQualified(
+          {
+            contentId: content.id,
+            versionId: version.id,
+            shotIndex: i,
+            assetId: imageAsset.id,
+            imagePrompt: basePrompt,
+            contextSnapshot: { facts },
+            score,
+            verdictSummary: bestVerdict.summary,
+          },
+          EXEMPLAR_THRESHOLD,
+        )
+        .catch(() => {})
+    }
+    await provenanceRepo.append(db, {
+      contentId: content.id,
+      versionId: version.id,
+      eventType: 'ai_generated',
+      actorType: 'ai',
+      provider: 'pipeline',
+      model: 'quality-gate',
+      payload: { stage: 'image.gate', shotIndex: i, ...gateInfo, referenceUsed: reference != null },
+    }).catch(() => {})
+    return {
+      entry: { shotIndex: i, imageAssetId: imageAsset.id, gate: gateInfo },
+      imageBase64: best.imageBase64,
+      imageMime: best.mime,
+    }
+  }
+
+  /** 原生视频：节奏化提交（RPM=1 对齐）+ 抽帧快审（严格缺陷预算内重试）。
+   *  失败直接上抛——诚实失败 + 断点续跑（Ken Burns 回落已取缔，设计 §3.1）。 */
+  async function generateNativeVideo(
+    shot: ShotSnapshot,
+    i: number,
+    imageBase64: string,
+    imageMime: string,
+  ): Promise<{ videoAssetId: string; videoGate?: ShotAssetEntry['videoGate'] }> {
+    const facts = gateFactsFor(shot, structure)
+    const prompt = videoPromptFor(shot, structure)
+    const imageUrl = `data:${imageMime};base64,${imageBase64}`
+    let lastVerdict: Awaited<ReturnType<typeof reviewVideo>> = null
+    let lastResult: VideoShotResult | null = null
+    for (let attempt = 1; attempt <= 1 + MAX_VIDEO_REGENS; attempt++) {
+      const { result } = await pacedVideoCall(() =>
+        router.video({ prompt, imageUrl, size: videoSize, speedFirst: true }, { ...ctx, purpose: 'shot.video' }),
+      )
+      lastResult = result
+      if (!videoGateEnabled()) break
+      // 抽中点帧 → 快审（首帧 vs 中点帧：水印/损坏/人物突变）
+      let verdict: Awaited<ReturnType<typeof reviewVideo>> = null
+      try {
+        const videoPath = join(gateWorkDir, `shot-${i}-attempt${attempt}.mp4`)
+        const framePath = join(gateWorkDir, `shot-${i}-attempt${attempt}-mid.jpg`)
+        await writeFile(videoPath, Buffer.from(result.base64, 'base64'))
+        await extractMidFrame(videoPath, framePath)
+        const midBase64 = (await readFile(framePath)).toString('base64')
+        verdict = await reviewVideo(imageBase64, midBase64, facts, ctx)
+        // 注意：不在此处清目录——后续镜头还要写抽帧文件；整个 gateWorkDir 在 Job 完成段统一清理
+      } catch {
+        verdict = null // 抽帧/评审失败：放行（诚实标注 skipped）
+      }
+      lastVerdict = verdict
+      if (verdict == null) break // 评审不可用：不拦截（可用性优先）
+      const strict = verdict.watermark || compositeScore(verdict) < 4
+      if (!strict) break // 软性问题只记录不拦截
+      if (attempt > MAX_VIDEO_REGENS) {
+        throw new Error(
+          `镜头 ${i + 1} 原生视频未通过质检（${verdict.watermark ? '检测到水印' : '画面严重缺陷'}：${verdict.issues.slice(0, 2).join('；')}）`,
+        )
+      }
+      console.warn(`[pipeline] 镜头 ${i + 1} 视频严格缺陷，重试（${attempt}/${MAX_VIDEO_REGENS}）：${verdict.issues.join('；')}`)
+    }
+    const result = lastResult!
+    const videoAsset = await assetService.save({
       contentId: content.id,
       ownerId: content.ownerId,
       kind: 'generated',
       data: Buffer.from(result.base64, 'base64'),
       declaredMime: result.mime,
     })
-    const entry: { shotIndex: number; imageAssetId: string; videoAssetId?: string; ttsAssetId?: string } = {
-      shotIndex: i,
-      imageAssetId: imageAsset.id,
+    const videoGate = lastVerdict
+      ? { pass: lastVerdict.pass, skipped: false, score: compositeScore(lastVerdict) }
+      : videoGateEnabled()
+        ? { pass: true, skipped: true, score: null }
+        : undefined
+    return { videoAssetId: videoAsset.id, videoGate }
+  }
+
+  const imageTasks = shots.map((shot, i) => async () => {
+    const motionMode = motionModeFor(shot, MOTION_ENV)
+    const prior = priorEntries.get(i)
+
+    // A. 整镜已完成（composition：图；native：图+视频）且资产健在 → 复用跳过（resume 核心）
+    if (prior?.gate?.pass && prior.imageAssetId && (motionMode === 'composition' || prior.videoAssetId)) {
+      const imageAsset = await assetService.getById(prior.imageAssetId).catch(() => null)
+      const videoAsset =
+        motionMode === 'composition' || !prior.videoAssetId
+          ? true
+          : Boolean(await assetService.getById(prior.videoAssetId).catch(() => null))
+      if (imageAsset && videoAsset) {
+        entriesByIndex.set(i, { ...prior })
+        imageDone++
+        await jobService.reportProgress(jobId, {
+          stage: 'images',
+          current: imageDone,
+          total: shots.length,
+          label: imagesStageLabel(imageDone, shots.length),
+          shotAssets: entriesSnapshot(),
+        })
+        return
+      }
     }
 
-    // native 路径（ADR-0001 Rev.3 产品默认）：首帧图生视频；失败逐镜回落组合式（不丢用户工作）
-    if (motionModeFor(shot, MOTION_ENV) === 'native' && hasVideoShotProvider()) {
-      // 图片先入进度（首帧已可渲染，视频生成期间不再是黑盒）
-      shotAssets.push(entry)
-      await jobService.reportProgress(jobId, {
-        stage: 'images',
-        current: imageDone,
-        total: shots.length,
-        label: imagesStageLabel(imageDone, shots.length),
-        shotAssets: shotAssets.slice(),
-      })
+    // B. 图像：native 断在视频的场景复用已质检图（省图像配额），否则走质量门循环
+    let entry: ShotAssetEntry
+    let imageBase64: string
+    let imageMime: string
+    const priorImageOk = prior?.gate?.pass && prior.imageAssetId != null
+    const priorImageAsset = priorImageOk ? await assetService.getById(prior!.imageAssetId).catch(() => null) : null
+    if (priorImageAsset) {
+      entry = { ...prior! }
       try {
-        const { result: videoResult } = await serializeVideoCall(() =>
-          router.video(
-            {
-              prompt: videoPromptFor(shot, structure),
-              imageUrl: `data:${result.mime};base64,${result.base64}`,
-              size: videoSize,
-              speedFirst: true,
-            },
-            { ...ctx, purpose: 'shot.video' },
-          ),
-        )
-        const videoAsset = await assetService.save({
-          contentId: content.id,
-          ownerId: content.ownerId,
-          kind: 'generated',
-          data: Buffer.from(videoResult.base64, 'base64'),
-          declaredMime: videoResult.mime,
-        })
-        entry.videoAssetId = videoAsset.id
-      } catch (e) {
-        const message = e instanceof Error ? e.message : String(e)
-        console.warn(`[pipeline] 镜头 ${i + 1} 原生视频生成失败，回落组合式（Ken Burns）：${message}`)
-        await provenanceRepo.append(db, {
-          contentId: content.id,
-          versionId: version.id,
-          eventType: 'ai_generated',
-          actorType: 'ai',
-          provider: 'pipeline',
-          model: 'native-fallback',
-          payload: { stage: 'video.shot.fallback', shotIndex: i, error: message.slice(0, 300) },
-        })
+        const buf = await readFile(assetService.resolveLocalPath(priorImageAsset.storageLocation))
+        imageBase64 = buf.toString('base64')
+        imageMime = priorImageAsset.mime || 'image/png'
+      } catch {
+        const fresh = await generateGatedImage(shot, i)
+        entry = fresh.entry
+        imageBase64 = fresh.imageBase64
+        imageMime = fresh.imageMime
       }
     } else {
-      shotAssets.push(entry)
+      const fresh = await generateGatedImage(shot, i)
+      entry = fresh.entry
+      imageBase64 = fresh.imageBase64
+      imageMime = fresh.imageMime
+    }
+    entriesByIndex.set(i, entry)
+
+    // 图片先入进度（首帧已可渲染，视频生成期间不再是黑盒）
+    await jobService.reportProgress(jobId, {
+      stage: 'images',
+      current: imageDone,
+      total: shots.length,
+      label: imagesStageLabel(imageDone, shots.length),
+      shotAssets: entriesSnapshot(),
+    })
+
+    // C. native 视频：已完成的复用；否则节奏化生成。失败上抛 → Job 可重试失败 → resume 只补本镜
+    //    （Ken Burns 回落已取缔：宁可诚实失败，绝不静默降级成幻灯片）
+    if (motionMode === 'native' && hasVideoShotProvider()) {
+      if (prior?.videoAssetId && (await assetService.getById(prior.videoAssetId).catch(() => null))) {
+        entry.videoAssetId = prior.videoAssetId
+        entry.videoGate = prior.videoGate
+      } else {
+        const doneCount = entriesSnapshot().filter((e) => {
+          const m = e.shotIndex < shots.length ? motionModeFor(shots[e.shotIndex]!, MOTION_ENV) : 'composition'
+          return m === 'composition' || e.videoAssetId != null
+        }).length
+        try {
+          const { videoAssetId, videoGate } = await generateNativeVideo(shot, i, imageBase64, imageMime)
+          entry.videoAssetId = videoAssetId
+          entry.videoGate = videoGate
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          if (process.env.IMAGINEOS_DEBUG_GATE) {
+            console.error('[gate-debug] 视频失败原始错误：', e instanceof Error ? `${e.name}: ${e.message}\n${e.stack}` : e)
+          }
+          throw new Error(
+            `镜头 ${i + 1} 原生视频生成失败：${message}（画面已完成 ${doneCount}/${shots.length} 镜，稍后自动重试并从缺口续跑，已完成镜头不会重烧）`,
+          )
+        }
+      }
     }
 
     imageDone++
@@ -277,19 +477,39 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       current: imageDone,
       total: shots.length,
       label: imagesStageLabel(imageDone, shots.length),
-      shotAssets: shotAssets.slice(),
+      shotAssets: entriesSnapshot(),
     })
   })
+  // 并发批次用 allSettled（非 all）：任一镜头失败时，同批在途镜头跑完落库后再抢救快照、统一抛错——
+  // 绝不留漂浮任务（其晚到的进度写入会因 Job 已 fail 被忽略 → 续跑丢已完成工作、浪费供给配额）
   for (let start = 0; start < imageTasks.length; start += IMAGE_CONCURRENCY) {
-    await Promise.all(imageTasks.slice(start, start + IMAGE_CONCURRENCY).map((t) => t()))
+    const settled = await Promise.allSettled(imageTasks.slice(start, start + IMAGE_CONCURRENCY).map((t) => t()))
+    const firstError = settled.find((s): s is PromiseRejectedResult => s.status === 'rejected')
+    if (firstError) {
+      await jobService
+        .reportProgress(jobId, {
+          stage: 'images',
+          current: imageDone,
+          total: shots.length,
+          label: imagesStageLabel(imageDone, shots.length),
+          shotAssets: entriesSnapshot(),
+        })
+        .catch(() => {})
+      throw firstError.reason
+    }
   }
 
-  // ---- TTS 旁白（并发 3） ----
+  // ---- TTS 旁白（并发 3；断点续跑：已配好音的镜头复用，不重烧配额） ----
   let ttsDone = 0
   const ttsTasks = shots
     .map((shot, i) => ({ shot, i }))
     .filter(({ shot }) => shot.narrationLine?.trim())
     .map(({ shot, i }) => async () => {
+      const entry = entriesByIndex.get(i)
+      if (entry?.ttsAssetId && (await assetService.getById(entry.ttsAssetId).catch(() => null))) {
+        ttsDone++
+        return
+      }
       const { result } = await router.tts(
         { text: shot.narrationLine! },
         { ...ctx, purpose: 'narration.tts' },
@@ -301,7 +521,6 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
       data: Buffer.from(result.base64, 'base64'),
       declaredMime: result.mime,
     })
-    const entry = shotAssets.find((s) => s.shotIndex === i)
     if (entry) entry.ttsAssetId = ttsAsset.id
     ttsDone++
     await jobService.reportProgress(jobId, {
@@ -317,6 +536,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   }
 
   // ---- 完成：GENERATING→REVIEW ----
+  await rm(gateWorkDir, { recursive: true, force: true }).catch(() => {})
   await jobService.reportProgress(jobId, { stage: 'storyboard_done', label: '画面与配音已就绪，去预览分镜' })
   await safeAdvance(content.id, 'REVIEW', payload.actorId, 'storyboard job 完成')
   await provenanceRepo.append(db, {
@@ -326,12 +546,12 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     actorType: 'ai',
     provider: 'pipeline',
     model: 'composite-storyboard',
-    payload: { stage: 'storyboard.done', shots: shots.length },
+    payload: { stage: 'storyboard.done', shots: shots.length, resumedFrom: resumedCount },
   })
   await jobService.complete(jobId, {
     stage: 'done',
     shots: shots.length,
-    shotAssets,
+    shotAssets: entriesSnapshot(),
   })
 }
 
