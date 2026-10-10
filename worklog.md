@@ -845,3 +845,23 @@ Stage Summary:
 - 经验复利层首块落地：高分镜头自动沉淀 ShotExemplar（prompt 快照+哈希），质量门参考帧形成同片一致性自增强回路；Generation repro/promptHash 让「好镜头怎么写出来的」完整可回放
 - 架构一致性：vision.review 走同一 Router（重试/冷却/记账/未来自定义 VLM 可插拔）；core/quality 纯函数零 AI 依赖（§87 边界 eslint 守卫全绿）
 - 已知边界：跨项目风格 few-shot 与图像 seed 重放留待后续（数据积累+provider 暴露后）；E2E 真实全 native 走查待真实管线下一轮跑（本轮单测已锁定语义）
+
+---
+Task ID: gate-e2e-024
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人「发现问题及时修复优化，提升平台能力」——quality-repro-023 遗留边界收口：质量门 + 全 native 零回落在真实管线的完整走查
+
+Work Log:
+- 环境恢复核实：remote main=5907b1e=HEAD（上轮已推送）✓；工作区 373 文件权限噪音（core.fileMode=false 清零）；DB 供给配置空 → restore-provider-config.mjs 恢复（agnes 三通道 + ant-ling）；vision.review 专项探测 probe-vision-review.mjs ✅（1.8s 返回结构化 verdict，markdown 围栏由 stripJsonFence 双兜底扛住）；LLM agnes ✅ / ant-ling 429（备胎位，链层自愈）；212/212 基线全绿
+- Gate 7 E2E（run-gate-e2e.mjs，40s 便利店·护士关东煮 5 镜全 native）：48 分钟供给墙实战——agnes 视频免费档累计配额打穿（41s 才返回 429，非 RPM 窗口）、zai-video 38 提交 5 成功（窗口不规则）、Job 3 次重试耗尽 + 1 次跨 Job 打捞恢复；期间 lib.mjs 三处过时断言逐一暴露修复（story/storyboard 同步假设→轮询化、僵死态判定补 Job status、waitForStatus 历史失败 Job 误判）
+- 五缺陷当场修复：①跨 Job 打捞（regenerate 失败态携 resumeFromFailed → salvage 同版本失败 Job 进度，A/B 分支照常校验 gate.pass+资产健在；「换一批」语义不变）②供给枯竭退避 ×8（全部候选 429 签名→120s/240s/360s；实测 04:26:53 失败+120s=04:28:54 认领分秒吻合）③门规则校准（叙事性环境文字 vs 非叙事叠印——镜4 确定性失败回路 15 次图像全灭的根因；VLM 自己在第3镜已说对「环境文字虽非水印」）④首帧一致性耦合（图像重画则旧视频不复用）⑤上述驱动库三处
+- 验收（三层证据）：代码层 216/216 + tsc/eslint 零错；账本层 vision.review 28 次全成（均值 9.4s）/图像门 10 轮含重试全历史/视频门 5/5 PASS（9.3-9.8）/repro+promptHash 100% 覆盖/范例 4 条 + 同片参考帧自增强实战生效（镜2 首过→沉淀→后续 referenceUsed=是）/零回落恒 0；VLM 层盲评四维全过（竖屏构图/字幕烧录/冷暖对撞/人物三帧一致 + 「真实运动感非静态AI图」——VLM 可分辨 native 真运动与 Ken Burns 假运动，取缔回落的视觉实证）
+- gate-metrics 基线落袋：一次通过率 30%（10 轮口径）、平均综合分 3.76、repro 覆盖 100%——镜4 被旧规则拖累的校准前数字，留给门规则校准后的下一轮对照
+- 工具沉淀：check-progress / gate-events / video-ledger（供给节律分析）入 scripts/m15/；设计文档 §8 实战记录（含供给侧结论：agnes 累计额度是 P3 升级的硬弹药）
+- 提交推送：ac4839b，ls-remote 核实 remote-tracking ref 一致 ✓
+
+Stage Summary:
+- quality-repro-023 的「E2E 真实全 native 走查」遗留边界正式收口：三机制（质量门/节奏化供给/范例沉淀）在真实双供给的残酷条件下全部存活并互相咬合
+- 产品级能力升维：失败恢复从「Job 内重试」扩展到「跨 Job 打捞」——供给受限世界里用户点重新生成的代价从整片重烧降为只补缺口；退避从瞬时故障尺度对齐到配额窗口尺度
+- 门规则完成第一次实战校准（叙事性环境文字不再误杀）——gate-metrics 基线就绪，校准效果待下一轮真实管线对照
+- 已知边界：镜4 类「景别遵从度」问题（prompt 要求特写、模型给中景）属图像模型指令遵从能力，变体 prompt 的构图 nudge 效果有限——列入后续 shot-prompt 迭代方向；agnes 免费档累计配额不可绕过，P3 供给升级是产品时长承诺的前置条件
