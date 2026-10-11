@@ -19,6 +19,8 @@ import {
   type StorySnapshot,
 } from '@/core/content/schemas'
 import { z } from 'zod'
+import { storyCraftFragment, storyboardCraftFragment } from '@/ai/planning/craft-library'
+import { defectMemoryFragment, type DefectMemoryEntry } from '@/core/quality/defect-memory'
 
 // ---------- 时长预算（纯函数，T4.2.2） ----------
 
@@ -66,7 +68,7 @@ const StoryDraftSchema = StorySnapshotSchema.omit({ scenes: true }).extend({
   characters: z.array(CharacterSheetSchema).min(1).max(4),
 })
 
-const STORY_SYSTEM = `你是 ImagineOS 的故事编剧，受过严格的影视短片训练。把选定的创作方向展开为一条结构扎实、能拍成短视频的故事。
+const _STORY_SYSTEM_BASE = `你是 ImagineOS 的故事编剧，受过严格的影视短片训练。把选定的创作方向展开为一条结构扎实、能拍成短视频的故事。
 
 结构（三幕微结构——每一场戏都必须推动故事，没有「只是发生了」的场戏）：
 - hook（钩子）：开场 3 秒抓人——悬念、反常或强视觉；观众决定看下去就在这一刻。
@@ -90,6 +92,8 @@ const STORY_SYSTEM = `你是 ImagineOS 的故事编剧，受过严格的影视�
 3. narrationStyle：旁白风格描述（第一人称/第三人称、口语/诗意，≤20字）。
 4. scenes：每场含 summary（这场戏发生什么，≤40字）、location、locationAnchor、dramaticFunction、valueShift（如「平静→不安」）、timeOfDay。
 5. 为普通人写作：具体、真诚，避免空洞形容词；情绪通过动作与细节呈现，不直接报菜名。`
+const STORY_SYSTEM = _STORY_SYSTEM_BASE + storyCraftFragment()
+export { STORY_SYSTEM }
 
 const STORY_JSON_HINT = `{
   "logline": "父亲扶了一夏天后座，只为松手那一下。",
@@ -186,7 +190,7 @@ const StoryboardSchema = z.object({
     .min(1),
 })
 
-const STORYBOARD_SYSTEM = `你是 ImagineOS 的分镜师，受过严格的影视视听语言训练。把故事场景分解为镜头（Shot），每个镜头将成为一张生成的图像 + 一段旁白配音 + 一次运镜（或原生 AI 视频），最终合成短视频。
+const _STORYBOARD_SYSTEM_BASE = `你是 ImagineOS 的分镜师，受过严格的影视视听语言训练。把故事场景分解为镜头（Shot），每个镜头将成为一张生成的图像 + 一段旁白配音 + 一次运镜（或原生 AI 视频），最终合成短视频。
 
 景别语法（蒙太奇的情绪递进——观众靠景别感知距离与亲密）：
 - extreme_wide（大远景）：定场、渺小感、命运感；开场与结尾常用。
@@ -210,6 +214,8 @@ const STORYBOARD_SYSTEM = `你是 ImagineOS 的分镜师，受过严格的影视
 7. 尽量把镜头按叙事节奏分配到各场景（每场景 1–4 镜）；仅当某一段叙事确实不可拆时才允许单场景超过 4 镜。
 8. 轴线与动作衔接（剪辑不跳戏）：同一场戏内人物的屏幕方向保持一致（面向左的持续面向左，除非剧情给转身理由）；上一镜人物向画面某侧运动，下一镜延续同方向；两镜动作能接得上（出画→入画、抬手→落下），观众才不会迷失。
 9. 全片色调与光线气质遵从故事阶段的 lookBook，不要每镜自创风格。`
+const STORYBOARD_SYSTEM = _STORYBOARD_SYSTEM_BASE + storyboardCraftFragment()
+export { STORYBOARD_SYSTEM }
 
 const STORYBOARD_JSON_HINT = `{
   "scenes": [
@@ -250,7 +256,7 @@ export async function generateStoryboard(
   concept: { name: string; oneLiner: string; visualDirection?: string },
   story: StorySnapshot,
   ctx: ProviderCallContext,
-  opts?: { exemplarPrompts?: Array<{ imagePrompt: string; score: number }> },
+  opts?: { exemplarPrompts?: Array<{ imagePrompt: string; score: number }>; defectMemory?: DefectMemoryEntry[] },
 ): Promise<StorySnapshot> {
   const targetSec = intent.fields.duration ?? 45
   const shotCount = planShotCount(targetSec)
@@ -273,7 +279,7 @@ ${story.lookBook ? `- 全片视觉圣经（所有镜头的色调与光线气质�
 视觉风格基底：${f.visual_style ?? 'cinematic_realism'}
 总时长目标：约 ${targetSec} 秒，全片约 ${shotCount} 个镜头。
 
-请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述、同场戏环境光线一致、轴线不跳）。`
+请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述、同场戏环境光线一致、轴线不跳）。${defectMemoryFragment(opts?.defectMemory ?? [])}`
 
   const parsed = await completeJson(
     StoryboardSchema,

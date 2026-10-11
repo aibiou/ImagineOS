@@ -45,6 +45,7 @@ import {
 } from '@/core/quality/shot-gate'
 import { reviewImage, reviewVideo } from '@/ai/quality/vision-review'
 import { exemplarService } from '@/core/quality/exemplar-service'
+import { loadDefectMemory, learnedAvoidanceFragment, type DefectMemoryEntry } from '@/core/quality/defect-memory'
 import { composeVideo, cleanupWorkDir, extractMidFrame } from '@/media/ffmpeg'
 import { storageRoot } from '@/infra/storage'
 import { db } from '@/lib/db'
@@ -231,14 +232,18 @@ export async function executeStoryboardPlanJob(jobId: string, payload: JobPayloa
 
   await jobService.reportProgress(jobId, { stage: 'planning', label: '正在拆分镜头…' })
 
-  // 经验复利（025 战线三）：跨项目高分范例的 prompt 写法注入分镜教学——高分沉淀反哺新项目
-  const exemplarPrompts = await exemplarService.topPromptsForTeaching(3).catch(() => [])
+  // 经验复利（025 战线三）：跨项目高分范例的 prompt 写法注入分镜教学——高分沉淀反哺新项目；
+  // 负向复利（收编 025 §4）：复发性缺陷 → 分镜层中文规避清单（工作室记忆读回通道）
+  const [exemplarPrompts, defectMemory] = await Promise.all([
+    exemplarService.topPromptsForTeaching(3).catch(() => []),
+    loadDefectMemory().catch(() => []),
+  ])
   const storyboard = await generateStoryboard(record, concept, workingStory, {
     contentId: content.id,
     versionId: content.currentVersionId,
     purpose: 'storyboard.generate',
     actorId: payload.actorId,
-  }, { exemplarPrompts })
+  }, { exemplarPrompts, defectMemory })
   await planService.saveStoryboard(content.id, storyboard, payload.actorId ?? 'system')
 
   const shotCount = storyboard.scenes.reduce((n, s) => n + s.shots.length, 0)
@@ -315,6 +320,8 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   if (shots.length === 0) throw new NonRetryableJobError('配方中没有镜头（先完成分镜）')
   const size = imageSizeFor(structure)
   const videoSize = videoSizeForAspect(aspectRatioOf(structure))
+  // 负向复利（收编 025 §4）：复发性缺陷 → 执行层英文负面约束（一次加载，全 Job 逐镜注入）
+  const defectMemory: DefectMemoryEntry[] = await loadDefectMemory().catch(() => [])
 
   // ---- 路由决策日志（审计 R3）：意图口径；实际产物以 computeGenerationMode（shotAssets）为准，
   // 两者差异 = 回落证据（native-fallback 事件逐镜头补充原因）
@@ -380,7 +387,7 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     shot: ShotSnapshot,
     i: number,
   ): Promise<{ entry: ShotAssetEntry; imageBase64: string; imageMime: string }> {
-    const basePrompt = imagePromptFor(shot, structure)
+    const basePrompt = imagePromptFor(shot, structure) + learnedAvoidanceFragment(defectMemory)
     const facts = gateFactsFor(shot, structure)
     const reference = imageGateEnabled() ? await exemplarService.latestReferenceFor(content.id).catch(() => null) : null
     const attempts: GateAttempt[] = []

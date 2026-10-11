@@ -891,3 +891,23 @@ Stage Summary:
 - 景别遵从度：首抽前置 + 重抽 mandatory 双硬化，首镜账本实证 prompt 以 Framing requirement 开头
 - worker 双通道：规划/生成分道，多作品并行创作的调度死角消除（022 场景解锁）
 - 已知边界：agnes 视频 queue-full（503 供给侧瞬态，非配额墙）本轮贯穿——6 镜 4 native 完成后诚实退避；修订「换一批」在旧批构思中返回 alreadyRunning（等本批出来再换，语义诚实）；范例教学对「景别遵从度」的间接提升需下一轮 gate-metrics 对照量化（本轮 5 条高分是信号非结论）
+
+---
+Task ID: consolidate-026
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 收编平行实现——024/025 两条战线未跟踪文件的审计、去重、能力补全与仓库收口
+
+Work Log:
+- ls-remote 核实远端真实处于 2f243d8（与本地一致，积压推送闭环确认）
+- 审计全部未跟踪文件：发现 src/core/generation/*、src/ai/vision/shot-reviewer.ts、models/route.ts 是被生产模块族（core/quality/shot-gate + exemplar-service、ai/quality/vision-review、router/video-pacer、remote-models 路由）取代的平行实现，仅被同样未跟踪的测试引用
+- 识别真实能力缺口并收编：① craft-library 短剧手法库（钩子四型/卡点三钩/节奏语法）接线进 STORY_SYSTEM/STORYBOARD_SYSTEM；② 缺陷记忆（负向复利）新建 core/quality/defect-memory.ts（适配生产 image.gate Provenance 载荷），双通道注入——分镜层中文规避清单（user prompt）+ 执行层英文负面约束（图像 prompt）；③ Generation 指纹账本补 attempt 字段 + firstFrameHash 改解码字节口径（sha256 前 16 位，跨表对账键）
+- 删除被取代实现：src/core/generation/（3 文件）、src/ai/vision/、过时重复路由 models/route.ts（旧 API 形状，tsc 断链）
+- 重写 024/025 测试对准生产模块族（15 用例：手法库注入存在性锁定/指纹账本/缺陷记忆纯函数+DB 读回/generateStoryboard 双向注入）；删除 provider-reuse-connection.test.ts（reuseConfigId API 已被两表设计取代）
+- 排查「畸形路由目录 id]」疑云：od/hex 逐字符实证为显示管线吞 [ 序列的幻象，真实目录 [id]/[mid] 全部正确——虚惊一场，未做无谓改动
+- 验证：vitest 250/250 全绿（27 文件）；tsc --noEmit 零错；eslint 干净
+
+Stage Summary:
+- 复利闭环补全：正向（高分范例 few-shot 写法遗传，已有）+ 负向（缺陷记忆规避清单，本次落地）——工作室记忆从「只写不读」变双向读回
+- 编剧层手法库上线：钩子类型学（悬念/反常/冲突/奇观）、结尾卡点三钩、8–12s 信息密度节奏语法进 system prompt
+- 指纹账本完备：每镜每次尝试落 attempt/promptHash/firstFrameHash——「好镜头怎么写出来的」可精确回放
+- 暂缓项（诚实记录）：escalatedCooldownMs 冷却递增+熔断（生产以 pacer 节奏+固定冷却+诚实失败应对供给墙）、shotProgressLabel 患性轮次透出（需进度载荷演进）——留待下战役

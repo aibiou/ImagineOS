@@ -363,7 +363,20 @@ function promptSummaryOf(payload: unknown): Record<string, unknown> | undefined 
     summary.system = p.system.length > 2000 ? `${p.system.slice(0, 2000)}…` : p.system
   }
   if (typeof p.size === 'string' && p.size.length > 0) summary.size = p.size
-  if (typeof p.imageUrl === 'string' && p.imageUrl.length > 0) summary.firstFrameHash = sha256Prefix(p.imageUrl)
+  if (typeof p.imageUrl === 'string' && p.imageUrl.length > 0) {
+    // 首帧指纹 = sha256(图像解码字节) 前 16 位（复现对账键：与 ShotExemplar/Generation 同口径可跨表精确匹配）；
+    // data URI 形态先解码再哈希（哈希 URI 字符串会随 mime 前缀漂移），非 URI 形态诚实哈希原文
+    const m = /^data:[^,]*;base64,([\s\S]*)$/.exec(p.imageUrl)
+    if (m) {
+      try {
+        summary.firstFrameHash = createHash('sha256').update(Buffer.from(m[1]!, 'base64')).digest('hex').slice(0, 16)
+      } catch {
+        summary.firstFrameHash = sha256Prefix(p.imageUrl)
+      }
+    } else {
+      summary.firstFrameHash = sha256Prefix(p.imageUrl)
+    }
+  }
   if (Array.isArray(p.images)) summary.images = p.images.length
   return Object.keys(summary).length > 0 ? summary : undefined
 }
@@ -410,7 +423,7 @@ async function runWithRetry<P, R>(
         model: provider.model,
         status: 'succeeded',
         purpose: ctx.purpose,
-        inputSummary: promptSummaryOf(payload),
+        inputSummary: { attempt, ...promptSummaryOf(payload) },
         output: resultSummaryOf(result),
         latencyMs,
       })
@@ -427,7 +440,7 @@ async function runWithRetry<P, R>(
         model: provider.model,
         status: 'failed',
         purpose: ctx.purpose,
-        inputSummary: promptSummaryOf(payload),
+        inputSummary: { attempt, ...promptSummaryOf(payload) },
         error: message,
         latencyMs,
       })
