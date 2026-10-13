@@ -13,6 +13,7 @@ import {
   type IntentRecord,
 } from '@/core/content/schemas'
 import { aspectFromExpression } from '@/core/content/aspect'
+import { isSerialDuration, serialKeywordsInExpression } from '@/core/content/season-geometry'
 import { z } from 'zod'
 
 // ---------- 抽取结果 ----------
@@ -45,7 +46,8 @@ const INTENT_SYSTEM = `你是 ImagineOS 的意图理解引擎。用户会说一�
 5. emotion 是情绪词数组（中文），如 ["温暖", "怀旧"]。
 6. characters 数组：用户提到的人物（含"我""父亲"等），name 用用户原词，description 一句话。
 7. 若有关键信息缺失（时长/观众/情绪基调/用途），在 questions 里提出最多 3 个简短自然的问题（面向普通人，不使用任何专业术语）。信息充足时 questions 为空数组。
-8. aspectRatio 画幅：用户提到「横屏/横版/宽屏」（或明确说 16:9）→ "16:9"；「竖屏/竖版」（或 9:16）→ "9:16"；未提及 → 默认 "9:16"（标 ai_default）。`
+8. aspectRatio 画幅：用户提到「横屏/横版/宽屏」（或明确说 16:9）→ "16:9"；「竖屏/竖版」（或 9:16）→ "9:16"；未提及 → 默认 "9:16"（标 ai_default）。
+9. 长片与连续剧（serial-season-027）：duration 是用户想要的总时长（可到 3600）。总时长 ≥ 240 秒（4 分钟）→ format 填 "serial"（连续剧——平台会自动分集，每集 1-2 分钟，剧情连贯人物一致）；用户提到「连续剧/短剧/分集/每集几分钟」也填 "serial"。总时长 < 240 秒 → 照旧（short_film 等单集格式）。用户说「每集 X 分钟」时 duration 填总时长（若只给了集数与每集时长，相乘得总时长）。`
 
 const INTENT_JSON_HINT = `{
   "fields": {
@@ -54,7 +56,7 @@ const INTENT_JSON_HINT = `{
     "emotion": ["情绪词"]?,
     "audience": "string? 给谁看",
     "tone": "string? 语气基调",
-    "format": "short_film | vlog | documentary | explainer | ...",
+    "format": "short_film | vlog | documentary | explainer | serial（连续剧：总时长≥240秒或用户提到分集/短剧/每集几分钟） | ...",
     "aspectRatio": "9:16 | 16:9（横屏/竖屏；未提及默认 9:16）",
     "duration": 45,
     "visual_style": "cinematic_realism | watercolor | anime | retro_film | ...",
@@ -78,12 +80,26 @@ const DEFAULT_QUESTIONS = [
 
 function heuristicIntent(rawExpression: string): IntentRecord {
   const cleaned = rawExpression.replace(/\s+/g, ' ').trim()
-  // 从原话中尽力抽取时长（"45秒的视频" / "一分钟"）
+  // 从原话中尽力抽取时长（"45秒的视频" / "50分钟" / "一小时"）
+  // 分钟上限 3600（serial-season-027：长片不再被锄成 5 分钟——分集几何会接管）
   let duration = 45
-  const secMatch = cleaned.match(/(\d{1,3})\s*(?:秒|s)/i)
-  const minMatch = cleaned.match(/(\d{1,2})\s*分钟/)
-  if (secMatch?.[1]) duration = Math.min(180, Math.max(5, Number(secMatch[1])))
-  else if (minMatch?.[1]) duration = Math.min(300, Number(minMatch[1]) * 60)
+  let durationFromUser = false
+  const secMatch = cleaned.match(/(\d{1,4})\s*(?:秒|s)\b/i)
+  const minMatch = cleaned.match(/(\d{1,3})\s*分钟/)
+  const hourMatch = cleaned.match(/([一二三]?\d)\s*个?小时/)
+  if (secMatch?.[1]) {
+    duration = Math.min(180, Math.max(5, Number(secMatch[1])))
+    durationFromUser = true
+  } else if (minMatch?.[1]) {
+    duration = Math.min(3600, Number(minMatch[1]) * 60)
+    durationFromUser = true
+  } else if (hourMatch?.[1]) {
+    duration = Math.min(3600, Number(hourMatch[1]) * 3600)
+    durationFromUser = true
+  }
+
+  // 连续剧检测（关键词）：长片意图在降级路径也不丢分集语义
+  const serial = serialKeywordsInExpression(cleaned) || isSerialDuration(duration)
 
   const fields = {
     topic: cleaned.length > 15 ? `${cleaned.slice(0, 15)}…` : cleaned,
@@ -91,7 +107,7 @@ function heuristicIntent(rawExpression: string): IntentRecord {
     emotion: ['温暖'],
     audience: '通用观众',
     tone: '真诚自然',
-    format: 'short_film',
+    format: serial ? 'serial' : 'short_film',
     aspectRatio: aspectFromExpression(cleaned) ?? '9:16',
     duration,
     visual_style: 'cinematic_realism',
@@ -104,7 +120,10 @@ function heuristicIntent(rawExpression: string): IntentRecord {
   const sources: Record<string, 'user' | 'ai_default'> = {}
   for (const key of Object.keys(fields)) {
     sources[key] =
-      key === 'topic' || (key === 'duration' && secMatch) || (key === 'aspectRatio' && aspectFromExpression(cleaned))
+      key === 'topic' ||
+      (key === 'duration' && durationFromUser) ||
+      (key === 'format' && serial) ||
+      (key === 'aspectRatio' && aspectFromExpression(cleaned))
         ? 'user'
         : 'ai_default'
   }

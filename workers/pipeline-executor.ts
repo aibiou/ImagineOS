@@ -18,9 +18,11 @@ import { createPacedVideoScheduler } from '@/ai/router/video-pacer'
 import type { ImageSize, ProviderCallContext, VideoShotResult } from '@/ai/router/types'
 import { generateStoryDraft, generateStoryboard } from '@/ai/planning/story'
 import { generateDirections } from '@/ai/planning/directions'
+import { generateSeasonBible } from '@/ai/planning/season'
 import { planRevision } from '@/ai/revision/locator'
 import { intentService } from '@/core/intent/intent-service'
 import { planService } from '@/core/planning/plan-service'
+import { seasonService } from '@/core/planning/season-service'
 import { jobService, NonRetryableJobError } from '@/core/jobs/job-service'
 import { contentRepo } from '@/core/repositories/content-repo'
 import { provenanceRepo } from '@/core/repositories/provenance-repo'
@@ -204,15 +206,20 @@ export async function executeStoryDraftJob(jobId: string, payload: JobPayload): 
   if (!content) return
   const record = await intentService.requireRecord(content.id)
   const concept = await planService.requireConcept(content.id)
+  // 连续剧（serial-season-027）：剧集 Content → 季圣经约束注入（锚点冻结，代码保证）
+  const season = await seasonService.seasonContextFor(content.id)
 
-  await jobService.reportProgress(jobId, { stage: 'writing', label: '正在展开你的故事…' })
+  await jobService.reportProgress(jobId, {
+    stage: 'writing',
+    label: season ? `正在展开第 ${season.episode.index + 1} 集（共 ${season.geometry.episodeCount} 集）的故事…` : '正在展开你的故事…',
+  })
 
   const story = await generateStoryDraft(record, concept, {
     contentId: content.id,
     versionId: content.currentVersionId,
     purpose: 'story.generate',
     actorId: payload.actorId,
-  })
+  }, { season })
   await planService.saveStoryDraft(content.id, story, payload.actorId ?? 'system')
 
   await jobService.complete(jobId, {
@@ -229,8 +236,12 @@ export async function executeStoryboardPlanJob(jobId: string, payload: JobPayloa
   const concept = await planService.requireConcept(content.id)
   const workingStory = await planService.getWorkingStory(content.id)
   if (!workingStory) throw new NonRetryableJobError('故事还没写（先展开故事）')
+  const season = await seasonService.seasonContextFor(content.id)
 
-  await jobService.reportProgress(jobId, { stage: 'planning', label: '正在拆分镜头…' })
+  await jobService.reportProgress(jobId, {
+    stage: 'planning',
+    label: season ? `正在拆分第 ${season.episode.index + 1} 集的镜头…` : '正在拆分镜头…',
+  })
 
   // 经验复利（025 战线三）：跨项目高分范例的 prompt 写法注入分镜教学——高分沉淀反哺新项目；
   // 负向复利（收编 025 §4）：复发性缺陷 → 分镜层中文规避清单（工作室记忆读回通道）
@@ -243,7 +254,7 @@ export async function executeStoryboardPlanJob(jobId: string, payload: JobPayloa
     versionId: content.currentVersionId,
     purpose: 'storyboard.generate',
     actorId: payload.actorId,
-  }, { exemplarPrompts, defectMemory })
+  }, { exemplarPrompts, defectMemory, season })
   await planService.saveStoryboard(content.id, storyboard, payload.actorId ?? 'system')
 
   const shotCount = storyboard.scenes.reduce((n, s) => n + s.shots.length, 0)
@@ -276,6 +287,44 @@ export async function executeDirectionsJob(jobId: string, payload: JobPayload): 
     stage: 'done',
     count: directions.length,
     label: `已备好 ${directions.length} 个创作方向，挑一个你心动的。`,
+  })
+}
+
+// ---------------- Job: season.plan（serial-season-027：连续剧季规划计算型 Job） ----------------
+// 几何 → 圣经（LLM 一次）→ Season 落盘（anchorHash 冻结）→ 逐集孵化 Episode Content（直达 PLANNING）。
+// 不推进主片状态机（PLANNING 原地）；结果存 outputJson，前端按 jobId 轮询取用（仿 revision.plan）。
+
+export async function executeSeasonPlanJob(jobId: string, payload: JobPayload): Promise<void> {
+  const content = await contentRepo.findById(db, payload.contentId)
+  if (!content) throw new NonRetryableJobError(`作品不存在：${payload.contentId}`)
+
+  await jobService.reportProgress(jobId, { stage: 'season.planning', label: '正在规划整季分集与圣经…' })
+
+  // 领域守卫 + 分集几何（core 层）；已有 Season → 幂等短路
+  const prep = await seasonService.prepareSeasonPlan(payload.contentId)
+  let outcome = prep.existing
+  if (!outcome) {
+    const record = await intentService.requireRecord(payload.contentId)
+    const concept = await planService.requireConcept(payload.contentId)
+    const bible = await generateSeasonBible(record, concept, prep.geometry, {
+      contentId: payload.contentId,
+      versionId: content.currentVersionId,
+      purpose: 'season.plan',
+      actorId: payload.actorId,
+    })
+    outcome = await seasonService.persistSeason(payload.contentId, { bible, geometry: prep.geometry }, payload.actorId)
+  }
+
+  await jobService.complete(jobId, {
+    stage: 'done',
+    seasonId: outcome.seasonId,
+    anchorHash: outcome.anchorHash,
+    episodeCount: outcome.geometry.episodeCount,
+    episodeSec: Math.round(outcome.geometry.episodeSec),
+    totalSec: outcome.geometry.totalSec,
+    seasonLogline: outcome.bible.seasonLogline,
+    episodeContentIds: outcome.episodeContentIds,
+    label: `整季已规划：${outcome.geometry.episodeCount} 集 × 约 ${Math.round(outcome.geometry.episodeSec)} 秒`,
   })
 }
 
@@ -827,6 +876,7 @@ export async function executeJob(jobId: string, type: string, inputJson: string)
   if (!payload.contentId) throw new NonRetryableJobError('Job 缺少 contentId')
   if (type === 'story.draft') return executeStoryDraftJob(jobId, payload)
   if (type === 'storyboard.plan') return executeStoryboardPlanJob(jobId, payload)
+  if (type === 'season.plan') return executeSeasonPlanJob(jobId, payload)
   if (type === 'intent.directions') return executeDirectionsJob(jobId, payload)
   if (type === 'revision.plan') return executeRevisionPlanJob(jobId, payload)
   if (type === 'video.storyboard') return executeStoryboardJob(jobId, payload)

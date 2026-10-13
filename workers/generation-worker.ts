@@ -14,7 +14,7 @@ const WATCHDOG_EVERY_TICKS = 12 // 12 × 2.5s = 30s 一轮看门狗扫描
 const WORKER_GLOBAL_KEY = '__imagineos_worker__'
 
 /** 规划类 Job（LLM 计算型，秒级～分钟级）：专属通道，生成流量再大也不排队 */
-export const PLANNING_JOB_TYPES = ['story.draft', 'storyboard.plan', 'intent.directions', 'revision.plan']
+export const PLANNING_JOB_TYPES = ['story.draft', 'storyboard.plan', 'intent.directions', 'revision.plan', 'season.plan']
 
 declare global {
    

@@ -114,6 +114,10 @@ model Content {
   remixSources Remix[]                @relation("RemixSource")
   interactions ContentInteraction[]
 
+  // 连续剧（serial-season-027）：季主片（持有圣经）与剧集（每集独立成片）的双向回指
+  seasonMaster Season?                 @relation("SeasonMasterContent")
+  episodeEntry Episode?                @relation("EpisodeContent")
+
   @@index([ownerId, status])
   @@index([visibility, status])
 }
@@ -430,4 +434,39 @@ model ModelProviderModel {
 
   @@unique([providerId, channel, modelName])
   @@index([channel, enabled, priority])
+}
+
+// 连续剧季容器（serial-season-027 §1）：季圣经一次规划、全集引用的唯一事实源
+model Season {
+  id           String   @id @default(cuid())
+  contentId    String   @unique
+  content      Content  @relation("SeasonMasterContent", fields: [contentId], references: [id], onDelete: Cascade)
+  bibleJson    String // SeasonBible（Zod + 语义闸校验后冻结落盘；锚点串全集字节一致）
+  anchorHash   String // 锚点指纹（lookBook+visualAnchor+locationAnchor 联合 sha256 前 16 位）——全集对账基准
+  episodeCount Int
+  episodeSec   Float // 每集时长（秒；分集几何归一，总时长守恒）
+  totalSec     Int
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  episodes Episode[]
+
+  @@index([contentId])
+}
+
+// 剧集（每集 = 一个独立 Content，复用既有单集全链路；挂回所属季）
+model Episode {
+  id          String   @id @default(cuid())
+  seasonId    String
+  season      Season   @relation(fields: [seasonId], references: [id], onDelete: Cascade)
+  contentId   String   @unique
+  content     Content  @relation("EpisodeContent", fields: [contentId], references: [id], onDelete: Cascade)
+  index       Int // 0 基集序号
+  title       String
+  synopsis    String?
+  cliffhanger String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([seasonId])
 }

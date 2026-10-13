@@ -21,13 +21,105 @@ import {
 import { z } from 'zod'
 import { storyCraftFragment, storyboardCraftFragment } from '@/ai/planning/craft-library'
 import { defectMemoryFragment, type DefectMemoryEntry } from '@/core/quality/defect-memory'
+import {
+  charactersForEpisode,
+  locationsForEpisode,
+  recapFragment,
+  type EpisodeOutline,
+  type SeasonBible,
+  type SeasonEpisodeContext,
+} from '@/core/content/season-bible'
+import type { SeasonGeometry } from '@/core/content/season-geometry'
+
+// ---------- 连续剧集约束（serial-season-027 §4 L1：锚点由代码冻结，LLM 只许引用） ----------
+
+
+/** 集模式 system 指令追加段（铁律：锚点原样引用） */
+function seasonEpisodeSystemFragment(): string {
+  return `
+
+本任务是连续剧的一集（季圣经已冻结）。铁律：
+- 人物外貌锚点（visualAnchor）与场景锚点（locationAnchor）来自季圣经，必须原样引用，禁止改写或重新发明——系统会在代码层覆写对账，你写差异也会被圣经原文覆盖。
+- 本集场景优先使用本集大纲引用的场景库场景；确需新增临时场景时给出自洽锚点（临时场景不要求跨集一致）。
+- 剧情连续：回应上一集的悬念（前情提要会给出）；本集结尾必须落在本集 cliffhanger 上（末场戏服务悬念，让观众想点开下一集）。
+- 本集是一个 1–2 分钟的完整小作品：三幕微结构照常成立（hook 抓人 → … → 落点即本集悬念/收口）。`
+}
+
+/** 集模式 user prompt 组装（圣经原文注入——事实源唯一） */
+function seasonEpisodeUserFragment(season: SeasonEpisodeContext): string {
+  const { bible, episode, geometry } = season
+  const epNo = episode.index + 1
+  const total = geometry.episodeCount
+  const lines: string[] = [
+    `【连续剧分集】这是全季第 ${epNo} / ${total} 集，每集约 ${Math.round(geometry.episodeSec)} 秒。`,
+    `- 本集标题：${episode.title}`,
+    `- 本集梗概：${episode.synopsis}`,
+    episode.cliffhanger ? `- 本集结尾悬念（末场戏落点）：${episode.cliffhanger}` : '- 本集是大结局：结尾必须收口，不留悬念。',
+    `- 本集情绪落点：${episode.emotionBeat}`,
+  ]
+  const recap = recapFragment(bible, episode.index)
+  if (recap) lines.push(`- ${recap}`)
+  const characters = charactersForEpisode(bible, episode)
+  if (characters.length > 0) {
+    lines.push(
+      `- 本集人物（外貌锚点必须与下述圣经原文学一致，禁止改写）：`,
+      ...characters.map(
+        (c) => `  · ${c.name}：${c.description ?? ''}${c.visualAnchor ? `｜锚点：${c.visualAnchor}` : ''}`,
+      ),
+    )
+  }
+  const locations = locationsForEpisode(bible, episode)
+  if (locations.length > 0) {
+    lines.push(
+      '- 本集场景库（环境锚点必须与下述圣经原文学一致，禁止改写）：',
+      ...locations.map((l) => `  · ${l.name}：${l.locationAnchor}${l.timeOfDay ? `（常驻时段：${l.timeOfDay}）` : ''}`),
+    )
+  }
+  lines.push(`- 全季视觉圣经（本集色调与光线气质的唯一基准）：${bible.lookBook}`)
+  lines.push('- 全季旁白风格：' + bible.narrationStyle)
+  return lines.join('\n')
+}
+
+/** 锚点冻结覆写（L1 防飘逸的代码保证）：LLM 返回后，人物表/视觉圣经/场景锚点一律覆写为圣经原文。
+ *  临时场景（不在场景库里的 location）保留 LLM 自洽锚点。场景名匹配：精确 → 包含。 */
+export function freezeStoryToBible(story: StorySnapshot, season: SeasonEpisodeContext): StorySnapshot {
+  const { bible, episode } = season
+  const characters = charactersForEpisode(bible, episode)
+  const locationIndex = new Map<string, { name: string; anchor: string; timeOfDay?: string }>()
+  for (const l of bible.recurringLocations) {
+    locationIndex.set(l.name, { name: l.name, anchor: l.locationAnchor, timeOfDay: l.timeOfDay })
+  }
+  const resolveLocation = (loc: string | undefined) => {
+    if (!loc) return undefined
+    const exact = locationIndex.get(loc)
+    if (exact) return exact
+    for (const [name, entry] of locationIndex) {
+      if (loc.includes(name) || name.includes(loc)) return entry
+    }
+    return undefined
+  }
+  return {
+    ...story,
+    characters: characters.length > 0 ? characters : story.characters,
+    lookBook: bible.lookBook,
+    narrationStyle: bible.narrationStyle,
+    emotionArc: story.emotionArc,
+    scenes: story.scenes.map((sc) => {
+      const loc = resolveLocation(sc.location)
+      if (!loc) return sc
+      return { ...sc, locationAnchor: loc.anchor, timeOfDay: loc.timeOfDay ?? sc.timeOfDay }
+    }),
+  }
+}
 
 // ---------- 时长预算（纯函数，T4.2.2） ----------
 
-/** 目标镜头数：3–8 镜，45s → 5 镜左右 */
+/** 目标镜头数：3–8 镜，45s → 5 镜左右；≥90s 的长内容（连续剧单集/2 分钟短片）放宽到 14 镜
+ *  （serial-season-027：120s 单集原本被 8 镜×12s 上限锄到 96s，镜头预算首次与时长诚实对齐） */
 export function planShotCount(durationSec: number): number {
   const n = Math.round(durationSec / 9)
-  return Math.min(8, Math.max(3, n))
+  const cap = durationSec >= 90 ? 14 : 8
+  return Math.min(cap, Math.max(3, n))
 }
 
 /** 把 LLM 产出的镜头时长归一到目标总时长（±15% 容差内则不调整） */
@@ -129,20 +221,22 @@ export async function generateStoryDraft(
   intent: IntentRecord,
   concept: { name: string; oneLiner: string; emotion?: string; visualDirection?: string },
   ctx: ProviderCallContext,
+  opts?: { season?: SeasonEpisodeContext },
 ): Promise<StorySnapshot> {
   const f = intent.fields
+  const seasonBlock = opts?.season ? `${seasonEpisodeUserFragment(opts.season)}\n\n` : ''
   const userPrompt = `创作意图：主题「${f.topic}」${f.duration ? `，约 ${f.duration} 秒` : ''}${f.emotion?.length ? `，期望情绪 ${f.emotion.join('、')}` : ''}${f.characters?.length ? `，人物：${f.characters.map((c) => `${c.name}(${c.description ?? ''})`).join('、')}` : ''}
 选定创作方向：「${concept.name}」——${concept.oneLiner}${concept.emotion ? `（情绪：${concept.emotion}）` : ''}${concept.visualDirection ? `（视觉：${concept.visualDirection}）` : ''}
 
-请展开故事（三幕微结构 + 人物小传 + 全片视觉圣经与场景锚点 + 情绪节拍与场景一一对应）。`
+${seasonBlock}请展开故事（三幕微结构 + 人物小传 + 全片视觉圣经与场景锚点 + 情绪节拍与场景一一对应）。`
 
   const parsed = await completeJson(
     StoryDraftSchema,
-    { system: STORY_SYSTEM, user: userPrompt, jsonHint: STORY_JSON_HINT },
+    { system: STORY_SYSTEM + (opts?.season ? seasonEpisodeSystemFragment() : ''), user: userPrompt, jsonHint: STORY_JSON_HINT },
     ctx,
     { temperature: 0.7 },
   )
-  return {
+  const story: StorySnapshot = {
     logline: parsed.logline,
     narrationStyle: parsed.narrationStyle,
     emotionArc: parsed.emotionArc,
@@ -159,6 +253,8 @@ export async function generateStoryDraft(
       shots: [],
     })),
   }
+  // L1 防飘逸：集模式下人物锚点/视觉圣经/场景锚点覆写为圣经原文（LLM 只被允许引用）
+  return opts?.season ? freezeStoryToBible(story, opts.season) : story
 }
 
 // ---------- Storyboard 生成（场景 → 镜头：景别语法 + 钩子 + 节拍 + 转场） ----------
@@ -217,6 +313,14 @@ const _STORYBOARD_SYSTEM_BASE = `你是 ImagineOS 的分镜师，受过严格的
 const STORYBOARD_SYSTEM = _STORYBOARD_SYSTEM_BASE + storyboardCraftFragment()
 export { STORYBOARD_SYSTEM }
 
+/** 集模式分镜 system 追加段（serial-season-027）：锚点字面一致 + 末镜悬念落点 */
+const _STORYBOARD_SEASON_FRAGMENT = `
+
+连续剧单集分镜的附加铁律：
+- 人物外貌与环境锚点已在故事层从季圣经冻结——你写 imagePrompt 时主体/环境必须与之字面一致（系统也会程序化追加锚点，双重保险）。
+- 末镜落点 = 本集结尾悬念（或大结局收口）：悬念镜用特写/大特写 + 短促节拍，把观众接住。
+- 首镜钩子照常（3 秒抓人），但可以呼应上一集悬念（前情提要已给）——连续剧观众是带着上一集结尾点进来的。`
+
 const STORYBOARD_JSON_HINT = `{
   "scenes": [
     {
@@ -256,9 +360,9 @@ export async function generateStoryboard(
   concept: { name: string; oneLiner: string; visualDirection?: string },
   story: StorySnapshot,
   ctx: ProviderCallContext,
-  opts?: { exemplarPrompts?: Array<{ imagePrompt: string; score: number }>; defectMemory?: DefectMemoryEntry[] },
+  opts?: { exemplarPrompts?: Array<{ imagePrompt: string; score: number }>; defectMemory?: DefectMemoryEntry[]; season?: SeasonEpisodeContext },
 ): Promise<StorySnapshot> {
-  const targetSec = intent.fields.duration ?? 45
+  const targetSec = opts?.season ? Math.round(opts.season.geometry.episodeSec) : (intent.fields.duration ?? 45)
   const shotCount = planShotCount(targetSec)
   const f = intent.fields
 
@@ -278,13 +382,13 @@ ${story.scenes.map((s) => `  ${s.index}. ${s.summary}${s.location ? `（${s.loca
 ${story.lookBook ? `- 全片视觉圣经（所有镜头的色调与光线气质基准）：${story.lookBook}\n` : ''}创作方向：「${concept.name}」${concept.visualDirection ? `视觉：${concept.visualDirection}` : ''}
 视觉风格基底：${f.visual_style ?? 'cinematic_realism'}
 总时长目标：约 ${targetSec} 秒，全片约 ${shotCount} 个镜头。
-
-请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述、同场戏环境光线一致、轴线不跳）。${defectMemoryFragment(opts?.defectMemory ?? [])}`
+${opts?.season ? `\n${seasonEpisodeUserFragment(opts.season)}\n` : ''}
+请输出分镜（景别有递进、首镜是钩子、节奏有起伏、旁白成叙述、同场戏环境光线一致、轴线不跳${opts?.season ? '、末镜落在本集悬念' : ''}）。${defectMemoryFragment(opts?.defectMemory ?? [])}`
 
   const parsed = await completeJson(
     StoryboardSchema,
     {
-      system: STORYBOARD_SYSTEM + exemplarTeachingSection(opts?.exemplarPrompts ?? []),
+      system: STORYBOARD_SYSTEM + exemplarTeachingSection(opts?.exemplarPrompts ?? []) + (opts?.season ? _STORYBOARD_SEASON_FRAGMENT : ''),
       user: userPrompt,
       jsonHint: STORYBOARD_JSON_HINT,
     },

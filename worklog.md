@@ -911,3 +911,28 @@ Stage Summary:
 - 编剧层手法库上线：钩子类型学（悬念/反常/冲突/奇观）、结尾卡点三钩、8–12s 信息密度节奏语法进 system prompt
 - 指纹账本完备：每镜每次尝试落 attempt/promptHash/firstFrameHash——「好镜头怎么写出来的」可精确回放
 - 暂缓项（诚实记录）：escalatedCooldownMs 冷却递增+熔断（生产以 pacer 节奏+固定冷却+诚实失败应对供给墙）、shotProgressLabel 患性轮次透出（需进度载荷演进）——留待下战役
+
+---
+Task ID: serial-season-027
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 连续剧分集架构——「用户创建 50 分钟短视频」的完整答案：分集（每集 1-2 分钟）+ 跨集连贯一致不飘逸
+
+Work Log:
+- 基线收口：核实远端已同步至 0a28d64；删除 consolidate-026 遗留的平行实现残留（src/core/generation/、src/ai/vision/、models/route.ts、provider-reuse-connection.test.ts——从未物理落盘的删除）→ 250/250 恢复全绿，tsc 零错
+- 设计先行：docs/design/serial-season-027.md——审计出「50分钟被意图层钳成300s + 镜头数封顶8」的双重吞没；核心设计=季圣经（Season Bible）一次冻结全集引用 + 分集几何纯函数 + 防飘逸三层防线（L1 代码覆写/L2 VLM 评审同源/L3 anchorHash 对账）
+- 分集几何（core/content/season-geometry.ts）：planSeasonGeometry 纯函数——50min→25×120s、hint（「每集1分钟」中文数字支持）覆盖、<240s 不分集零侵入、集数上限60、总时长守恒
+- 季圣经（core/content/season-bible.ts 领域层 + ai/planning/season.ts 生成器）：SeasonBibleSchema（Zod）+ 语义闸（引用闭合/悬念链/几何对账）+ anchorHashOf（锚点指纹）+ charactersForEpisode/recapFragment
+- Prisma：Season（bibleJson+anchorHash 冻结落盘）+ Episode（每集独立 Content，contentType='episode'）双模型，db push 主/测试双库
+- 意图层：分钟钳制 300→3600（+小时解析）+ serial 检测（关键词+时长阈值）+ LLM system 规则第 9 条（长片→format=serial）——真实 LLM 实测「6分钟连续短剧」→ 360s+serial ✓
+- 编剧层注入：generateStoryDraft/generateStoryboard 增 opts.season（SeasonEpisodeContext）——user prompt 注入本集大纲/悬念/前情提要/圣经原文锚点；system 追加集模式铁律；**freezeStoryToBible 代码覆写**（人物锚点/lookBook/场景锚点一律覆写为圣经原文，LLM 写错也会被覆盖——防飘逸 L1 的代码保证）；planShotCount 镜头上限 8→14（≥90s，时长预算诚实对齐）
+- season-service（core，零 AI 依赖）：startSeasonPlan 幂等入队 + prepareSeasonPlan 领域守卫（<240s 诚实拒绝）+ persistSeason 事务孵化（Season+Episode+集Content+集Intent合成+Concept预冻结→直达PLANNING）+ seasonContextFor 读侧；架构边界重构一次（eslint no-restricted-imports 揪出 core→ai 违规，按 §87 拆 prepare/persist，LLM 调用归位执行器）
+- 管线接线：season.plan 计算型 Job（仿 revision.plan 范式）+ story.draft/storyboard.plan 的集模式注入 + PLANNING_JOB_TYPES 注册 + POST/GET /api/contents/[id]/season/plan 路由（入队+轮询+季视图）+ Provenance season_planned/episode_bootstrapped 事件类型
+- 测试：tests/serial-season-027.test.ts 15 用例——几何全分支/anchorHash 稳定性/语义闸三违例/3 集迷你季集成（锚点字节一致 toBe 级断言+悬念注入+时长预算±15%+幂等+诚实拒绝）；全量 265/265 绿
+- 真实 E2E（scripts/m15/serial-season-e2e.mjs + serial-season-run.sh 一体化驱动）：真 LLM 季圣经（暴雨骑手老陈找女儿，悬念链 E1电话呼救→E2血手印→E3收口）+ 3×120s 孵化 + **集1真实故事生成后锚点与圣经字节一致（DB 直查 expect 级核对：老陈 visualAnchor ✓ / lookBook ✓ / 骑手站点场景锚点=圣经原文 ✓ / 临时场景保留自洽锚点=设计内）**
+- E2E 排障三连：dev server 旧 PrismaClient 无 Season 模型（重启解决）→ 工具会话回收后台进程（一体化驱动脚本解决）→ 就绪检查 curl||echo 000 双零拼接假就绪（判等逻辑修复）
+
+Stage Summary:
+- 「50 分钟」的正确打开方式完整落地：意图不再吞时长 → 分集几何 → 季圣经一次规划 → N 集独立成片（复用既有单集全链路）→ 跨集锚点字节一致（代码保证，非 prompt 祈祷）
+- 防飘逸三层防线就位：L1 freezeStoryToBible 覆写（真实验证字节一致）+ L2 质量门评审口径同源（锚点=圣经）+ L3 anchorHash 全季对账（3b2f37b68686974f）
+- 悬念链结构化：每集 cliffhanger（大结局收口）——短剧「卡点三钩」手法库的数据库形态
+- 后续战役（诚实记录）：季进度 UI 网格、逐集自动串行编排（季级断点续跑）、全季连播拼片、跨集参考帧 VLM 抽查
