@@ -1,6 +1,9 @@
-# ImagineOS 多智能体工作日志（worklog）
+# ImagineOS Worklog（多代理共享工作日志）
 
-> 所有 agent 开工前必读本文件；完工后按模板追加（只追加，不覆盖）。
+协议：每个 Task 完成后追加一节，以 `---` 开头，禁止覆盖历史。新代理开工前必读本文件。
+
+
+## 【前置主线存档】aibiou/ImagineOS（2026-10-05 ~ 10-13，phase-0-2 → serial-season-027，27 个任务，265 测试全绿，main=4ce77c9）
 
 ---
 
@@ -936,3 +939,126 @@ Stage Summary:
 - 防飘逸三层防线就位：L1 freezeStoryToBible 覆写（真实验证字节一致）+ L2 质量门评审口径同源（锚点=圣经）+ L3 anchorHash 全季对账（3b2f37b68686974f）
 - 悬念链结构化：每集 cliffhanger（大结局收口）——短剧「卡点三钩」手法库的数据库形态
 - 后续战役（诚实记录）：季进度 UI 网格、逐集自动串行编排（季级断点续跑）、全季连播拼片、跨集参考帧 VLM 抽查
+
+## 【本会话续记】沙箱重置后的 Alpha 会话（2026-10-19 起；Task 0-6 为该会话独立成果，Task 5 决策主线回归本基座）
+
+---
+Task ID: 0/1/2（合并执行）
+Agent: 主 Agent（AI CTO / GLM-5.3）
+Task: Phase 0 Repository Discovery + Phase 1 Architecture Understanding Report + Phase 2 Development Task Tree
+
+Work Log:
+- 勘探 /home/z/my-project：空仓库（仅 download/README.md 占位）；无 package.json/prisma/src/docs/worklog
+- 勘探环境能力：Node 24 / Bun / npm 可用；FFmpeg+FFprobe 可用；无 PostgreSQL、无 Redis；z-ai-web-dev-sdk 可用（仅后端）
+- 加载 fullstack-dev skill，确认硬约束：Next.js 16 App Router、Prisma+SQLite、用户仅可见 `/` 路由、单端口 3000（Caddy）、禁 bun run build、dev server 自动运行
+- 建立 /docs 树：product / architecture / decisions / evaluations / ideas
+- 撰写并落盘：understanding-report.md（10 项必答 + 环境能力矩阵 + 风险登记册）
+- 撰写并落盘：task-tree.md（Epic 0–14，任务 ID 稳定，AC + 测试策略 + 全局纪律）
+- 撰写并落盘：charter.md（红线/DoD/汇报格式/升级清单提炼）、ADR-001（monorepo→模块化单应用适配及五项关键决策）、ideas/README（3 条初始想法，其中 IDEA-003 标记升级给人）、evaluations/README（9 维评测 + Golden Dataset 计划）
+
+Stage Summary:
+- 关键决策：ADR-001 采纳"模块化单应用"——src/server/* 七模块映射 packages 语义，ESLint 强制边界；SQLite（PG 兼容纪律）；DB-backed 队列 + 进程内 Worker（BullMQ 对齐接口）；唯一 Provider = ZAI Adapter；Alpha 视频路径 = 分镜图像 + TTS + FFmpeg 合成（AI Creative Orchestra 编排式）；单页 shell 客户端视图切换
+- 关键判断：Alpha 验证的是心理命题（归属感）；两个关键时刻 = Creative Direction 选择 + 第一次自然语言修订；Content Object 是数据层不变量，先于 UI
+- 待人决策：IDEA-003 真人数字分身政策（Candidate，未实现）
+- 下一步：Phase 3 Repository Foundation（task-tree Epic 0：T0.1 初始化工程 → T0.2 src/server 骨架 → T0.3 ESLint 边界规则 → T0.4 env 校验 → T0.5 Vitest → T0.6 验收）
+
+---
+Task ID: 3（Epic 0 全量：T0.1–T0.7）
+Agent: 主 Agent（AI CTO / GLM-5.3）
+Task: Phase 3 Repository Foundation + FigCraft 模式吸收（用户指令：研究 figcraft 并"从外观到内核全方位提升"）
+
+Work Log:
+- 深潜 FigCraft（raw README）：提炼四条可迁移原则——单一命令面（400+ commands 注册表，UI/CLI/MCP 同源）、分层构建期检查（cargo xtask layers）、不可变文档模型（cheap undo）、never-crash guard 纪律
+- 落盘 ADR-002（命令注册表内核 + 不可变版本记录 + 分层检查命令化 + guard 纪律 + AGENTS.md），论证与 §86 的边界；task-tree 增补 T0.7；ideas 增补 IDEA-004（MCP 传输，Future）/IDEA-005（WASM 插件，Future）
+- T0.1：init 脚本完成 Next.js 16 工程初始化（dev server 后台运行）
+- T0.2：scripts/phase3-scaffold.mjs 生成 src/server 十二目录（commands/http/db/content/intent/planner/ai÷router+adapters/jobs/media/trust/auth）+ 边界 README + 类型化占位
+- T0.7：实现命令注册表内核——types.ts（AppError 六类错误码/CommandActor/CommandContext）、registry.ts（defineCommand/listCommands/executeCommand+guard）、system.ts（system.health：env→db→ffprobe→注册表 真实自检）、http.ts（薄绑定：resolveActor 幂等 upsert demo 用户 → executeCommand → 结构化日志 → 类型化 JSON 响应）
+- 新增 API：GET /api/health、GET /api/commands（注册表内省）
+- T0.3：eslint.config.mjs 六组边界规则（UI 禁入 server/api 仅 commands/SDK 仅 adapters/db 仅服务端/router 禁上行/content 域纯度）；独立 eslint.layers.config.mjs（分层检查专用配置）+ `bun run layers` 脚本；tests/eslint-fixtures 三个故意违规夹具 + boundaries.test.ts（ESLint API 编程式自测：规则必须真的会报错 + 真实源码树必须全绿）
+- T0.4：src/server/env.ts（zod 校验，缺失即阻断并输出可读错误）
+- T0.5：Vitest 基线（vitest.config.ts + setup.ts）；11 个测试：命令注册表 6 项（含 guard 崩溃隔离、walking skeleton 集成）+ env 1 项 + 边界自测 4 项
+- 外观第一触点：page.tsx 重写为 ImagineOS 首页外壳——深暖色+琥珀渐变（规避蓝/靛）、「你想表达什么？」hero、表达输入框+灵感提示、内核状态卡（渲染 /api/health 真实数据）、Creation Loop 六步卡、sticky footer 带 AI 标识说明；layout.tsx 换 ImagineOS 品牌 metadata
+- 修复过程：ESLint no-restricted-imports 不支持 except → 改负向前瞻 regex；NODE_ENV readonly 类型断言；tsconfig 排除模板目录（examples/skills/mini-services/scripts）；layers CLI 限定 src（夹具仅服务自测）
+- 验证：typecheck ✓ / lint 0 警告 ✓ / layers ✓ / test 11/11 ✓ / dev.log 显示真实链路（actor upsert 写路径 + SELECT 1 + command.ok 结构化日志 + HTTP 200）/ agent-browser：桌面+移动端快照、输入→toast 金路径、内核状态真实数据、无 console 错误、截图存档
+
+Stage Summary:
+- Epic 0 全部完成（T0.1–T0.7，AC 全过）。内核 = 命令注册表（ADR-002），已由真实 walking skeleton（DB→命令→API→UI）走通
+- 关键资产：src/server/commands（唯一命令面）、eslint.layers.config.mjs（架构边界自动检查）、tests/boundaries.test.ts（边界规则的自证明）、AGENTS.md（多智能体协议）
+- 产物：download/imagineos-alpha-home.png（首页截图存档）
+- 已知问题：tsconfig 排除了模板目录（模板代码非产品代码，不参与 typecheck）；demo actor 为单一演示用户（Epic auth/9 接 NextAuth 时替换，命令层签名不变）
+- 下一步：Phase 4 Database Foundation（Epic 1：T1.1 十八实体 schema → T1.2 版本链+Remix 血缘 → T1.3 Provenance → T1.4 migration+seed → T1.5 Repository 层 → T1.6 成本字段；写路径不可变性测试是验收核心）
+
+---
+Task ID: 4
+Agent: 主 Agent（AI CTO / GLM-5.3）
+Task: UX 设计先行包 + ADR-003 事件溯源内核（用户批准方案 1：设计文档先行，明确本轮不写业务代码）
+
+Work Log:
+- 基线核对：task-tree.md（Epic 7~10 AC 与任务 ID）、ADR-002（格式与论证风格）、已上线首页 page.tsx 的真实设计 tokens、layout.tsx 字体基线（Geist + 中文系统栈回退）、ideas 登记表
+- 前置调研（上一轮）：deepseek.com/harness 与 GitHub 仓库实查 → 结论：dsh 不直接集成（品类错位/沙箱约束/Provider 冲突/开发者预览稳定性），借鉴四机制（Trajectory 事件流→ADR-003；Model 插件化→验证 Router 红线；Minimal 评测模式→T13.2；Cordis→IDEA-005 参考系）
+- 落盘 ADR-003：事件溯源 Content Object——16 种事件目录（映射到 task-tree 写路径任务）、6 条不变量 I1–I6（各带测试形态）、SQLite 务实实现策略（content_events 表 + fold + 启动重放缓存，不引框架）、§86 边界论证（一张表+150 行替代四件套）、对 Epic 1/2/8/12/13 的影响清单、5 个验收问题
+- 落盘 /docs/design 六件：README（设计五原则/变更流程/两个关键时刻北极星）；01 金路径旅程图（11 阶段+ASCII 情绪曲线+两个关键时刻硬性规格+七大风险化解表+时间预算对齐 AC）；02 屏幕与线框（S1–S9 全线框、四态矩阵、AC 要点、shell 面包屑规则）；03 设计系统（色彩/字体/间距 tokens 与已上线首页一字对齐、14 组件清单、AI 标识分级与三形态、无障碍 AA、移动端保底策略）；04 交互模式库（9 模式各含规则/话术/反例/落点 + 模式×红线×任务交叉索引）；05 可用性红线（R1–R10 可测试 AC 条款，各含验证方式）
+- 同步引用：task-tree 使用说明新增"设计先行"条款；T13.2 增补"以 ADR-003 事件流为轨迹源，支持金路径无头回放评测"；IDEA-005 增补 Cordis 参考系更新（2026-10-19）
+- 一致性自检：9 屏 ↔ 11 旅程阶段全映射；每屏四态俱全；14 组件均标注红线/模式依赖；R1–R10 均含验证方式；ADR-003 事件目录覆盖 E1/E2/E3/E4/E6/E8/E9/E11/E12 全部写路径任务；工具输出污染检查（grep "Review the changes" 无命中，文件干净）
+
+Stage Summary:
+- 本轮零业务代码（遵守"先别着急动手"）；产出 = 1 ADR + 6 设计文档 + 3 处引用同步
+- ADR-003 将版本链/Remix 血缘/Provenance/回放四机制收口为单一只增不改事件流；Epic 1 的 schema 设计输入已备齐
+- 设计包状态：待产品负责人评审 → 冻结后成为 Epic 7~10 验收依据（体验性 AC 以 05 红线清单为准）
+- 风险登记：Prisma+SQLite 无原生 append-only 强制 → ADR-003 已定 Repository API 面 + 写路径测试双闸（触发器级禁改为 T1.5 评估项）；事件 schema 演进以 schema_version + strict 读策略防护
+- 下一步：等产品负责人评审设计包与 ADR-003；批准后启动 Phase 4（Epic 1 数据库基座：content_events + 投影 + I1–I6 写路径不变量测试为验收核心）
+
+---
+Task ID: 5
+Agent: 主 Agent（AI CTO / GLM-5.3）
+Task: 主线决策调研——通读 github.com/aibiou/ImagineOS，评估"继续自研 vs 在该仓库基础上继续开发"
+
+Work Log:
+- 身份厘清：该仓库 = 本项目自己的前身会话主线（同一 Master Brief v1.0、同一 GLM-5.3 AI CTO 角色、同一沙箱环境特征 db/custom.db + z-ai-web-dev-sdk + Caddyfile + worklog 协议）。其 worklog sandbox-restore-002 明确记录"产品负责人提供 GitHub 仓库 aibiou/ImagineOS"作为沙箱重置后的备份远端。非外部项目，无许可证障碍（唯一问题是仓库缺 LICENSE 文件，属卫生项）
+- 深度通读：README（双路径视频架构/仓库导航/运行方式）、worklog 806 行前 191 行（phase-0-2 → multi-provider-002 全部条目）、prisma/schema.prisma（24 表含 Season/Episode/ShotExemplar/ModelProvider 两级结构；快照式版本链 + Provenance 事件日志混合模型；六条数据不变量 I1-I6 与本会话 ADR-003 不变量高度同构）、GitHub commits 全历史（69 提交，10-05 至 10-13）
+- 关键事实：远端真实进度远超本会话——M0（Content Object 原语+30 测试）→ M1（真实生成管线全链：意图→3方向→故事→分镜→图像+TTS→FFmpeg 成片 49.4s，零 mock）→ M1.5（七道质量闸门，10类型×3范式真实创作，YDIF 帧间差分量化，证据分级 A/B/C）→ 10-07~13 持续迭代（native-first ADR Rev.3、双免费额度轮转+429冷却、多画幅 16:9、lookBook 视觉圣经、三幕微结构/景别语法/轴线规则、in-loop 质量门 vision.review+择优重抽+范例沉淀、promptHash 复现、发布分享落地页 /w/:id、作品删除级联、连续剧分集架构、多 Provider 动态配置+连接复用+蚂蚁 Ling-3.1-flash）——测试从 30→48→158→174→181→212→235 全绿；Gate 7 真人测试进行中；M2 范围待产品负责人决策
+- 本会话资产盘点（远端没有的）：①UX 设计先行包 6 件（docs/design：旅程图/9屏线框/设计系统/9 交互模式/R1-R10 红线）——远端有 user-language-rules+语言字典+P0/P1 验收但无系统化设计包；②ADR-002 命令注册表内核（已实现，远端为 route+core service 分层，无统一命令面）；③ADR-003 事件溯源设计（未实现；远端快照+Provenance 混合模型已满足 Alpha 不变量且经数据库级校验 0 错）；④本周外部研究（FigCraft 四原则/dsh Trajectory→T13.2 回放/Cordis 参考系）
+- 诚结论：远端功能覆盖严格超集于本会话已实现代码（本会话 Epic 0 ≈ 远端 E0 子集）；本会话价值在文档资产与架构方向，不在代码量
+
+Stage Summary:
+- 建议（待产品负责人批准）：**切换主线至 aibiou/ImagineOS 仓库基座继续开发**，本会话三资产选择性收编（设计包→M2 设计基线；命令注册表→登记为远端 ADR 系列的演进方向；事件溯源→降级为 Stage 2 方向不迁移）
+- 恢复路径已明确（远端 worklog 即 runbook）：clone → bun install → prisma generate → db push/seed → restore-media.ts 占位媒体 → dev server
+- 主要风险：远端运行时已死（两次沙箱重置），媒体为合成占位需配额或外部 Provider 密钥恢复；ADR 编号两套需收敛；视觉主题两种（远端黑紫粉金已过 P0/P1 验收 vs 本会话琥珀暖光）
+- 升级产品负责人决策三点：①主线切换确认（§85 级）②视觉主题取舍 ③本会话 ADR-003 降级为 Stage 2 方向是否接受
+
+---
+Task ID: 6
+Agent: 主 Agent（AI CTO / GLM-5.3）
+Task: 决策落档——产品负责人批准升级清单第 ③ 点：ADR-003 降级为 Stage 2 方向
+
+Work Log:
+- 产品负责人 2026-10-19 回复「可以」，接受 ADR-003 降级建议（对应 Task 5 升级清单第 ③ 点）
+- ADR-003 状态行改注：已决策 → 降级为 Stage 2 方向；Alpha 期不实施、不迁移；红线语义不受影响；正文（问题/决策/16 事件目录/I1–I6/实现策略/后果/验收问题）原样保留，定位为 Stage 2 现成施工图而非废弃稿
+- 依赖关系显式登记：本降级内生于「主线切换至 aibiou/ImagineOS」方案包；若第 ① 点被否决，则回滚本降级，恢复 ADR-003 为本会话 Epic 1 施工依据
+
+Stage Summary:
+- 升级清单 ③ 闭环：ADR-003 正式降级为 Stage 2 方向（生效前提 = 主线切换获批）
+- 升级清单余两点待产品负责人裁决：① 主线切换至 aibiou/ImagineOS 基座（§85 级；恢复 runbook 已备：clone → bun install → prisma generate → db push/seed → restore-media.ts 占位媒体 → dev server；获批后首动作 = 执行恢复 + 核对 235 测试基线 + 出基座体检报告）② 视觉主题取舍（远端黑紫粉金已过 P0/P1 验收 vs 本会话琥珀暖光 + 设计包 tokens 对齐）
+- 主 Agent 建议：① 切——远端为本会话严格功能超集，本会话资产（设计包/ADR-002 方向/研究结论）选择性收编不丢失；② 以远端主题为准——不折腾已过真人验收的 UI，设计包 03 tokens 改为对齐远端后冻结，琥珀暖光登记为 M2 备选主题
+
+---
+Task ID: mainline-restore-028
+Agent: GLM-5.3（主 agent，AI CTO 角色）
+Task: 产品负责人批准升级三点全包（①主线切换 §85 级 ②视觉主题以主线为准 ③ADR-003 降级）——主线基座回归本沙箱 + 本会话资产收编 + 基座体检
+
+Work Log:
+- 前置：环境勘定（本会话 git 工作树干净、dev server 活进程与端口占用、磁盘 7.8G）；clone aibiou/ImagineOS 全量 69 提交（HEAD=4ce77c9）至 .staging；通读恢复 runbook（README/最新两条 worklog/package.json 脚本面/prisma datasource/restore-provider-config/restore-media/restart-dev.sh）
+- 交换执行：停服 → 本会话资产整体归档 .archive-session-alpha（git bundle + 完整 .git + docs 全量 + worklog + 旧 custom.db + 全部应用代码）→ 远端基座 cp -a 落位（.git 换血为远端历史）→ docs 加性合并（evaluations/ideas 两处 README 碰撞改名 README-alpha-session.md 保留，其余零碰撞）→ worklog 三层合并（本会话头部 + 前置主线存档 27 任务 + 本会话 Task 0-6，共 1042 行零丢失）→ .zscripts 还原本环境运行态 → .gitignore 增补归档目录隔离
+- 踩坑实录：①cp -a 对 root 属主 upload/ 目录保留时间戳报 I/O error 中止——核查内容已全量落位（顶层零缺失、文件数全对齐），swap-finish.sh 补齐收尾三步 ②MultiEdit 为顺序应用不回滚语义（两次部分成功）——以 python repr 核对真实字节后精确重放改齐
+- 依赖与数据：bun install 3.5s/861 包（缓存命中）→ prisma generate → db push 全新 custom.db → restore-provider-config.mjs 幂等恢复供给（agnes-com 三通道 priority=10 + ant-ling Ling-3.1-flash priority=5）
+- 基线验证：restart-dev.sh product 模式启动，GET / 200（标题「ImagineOS — 想到了，就让它发生」）；vitest 265/265 全绿（28 文件 56s，与 serial-season-027 收口基线完全一致）；tsc 0 错；eslint 0 警；供给探测 agnes LLM ✓（12.4s）/ image ✓（10.1s）/ video 队列满 503（已知供给边界）
+- 种子真实管线（§63 链路）：IMAGINEOS_FORCE_COMPOSITION=1 逃生阀 + 550s 分块断点续跑 ×4 块；两次 timeout 孤儿 Job 以「租约置过期 + 状态归队 → composition 模式 server worker 接管约 2.5 分钟完成」收编（seed 的状态机行走预算按低延迟供给校准，当前 LLM 12s/次下偏紧——摩擦在 seed 预算非基座缺陷；孤儿接管证明 Job 断点续跑语义真实兑现）；终态：公开作品 4 件（《父亲与那辆二八大杠》含修订 v2 +《昨晚的梦，水彩一样》+《天空为什么是蓝色的》+《父亲与那辆二八大杠 · Remix》）+ 资产 53 件
+- 媒体核验：restore-media 占位生成器对 PNG 报 unhandled mime 跳过——改用文件系统直查（经 assetService.resolveLocalPath 同源逻辑），storage/assets 53/53 真实存在零缺失（seed 生成的是真实像素）
+- 浏览器实测：agent-browser 1440×900 首页全量渲染（hero「你想表达什么？」/ 表达输入框 / 灵感 chips / 4 件作品播放卡含 Remix）+ console 零错误；截图 download/mainline-restored-home.png 存档；服务已切回 product 模式
+- 决策②落档：docs/design/03-design-system.md v1.0→v1.1——tokens 对齐主线真实代码采样（canvas zinc-950 / surface zinc-900·800 / 文本 zinc-100~600 / accent violet-500 / 品牌渐变 violet-500→fuchsia-500 / 金色点睛 amber-300 / 警告 red-400·500·300），新增「金色点睛稀缺性」语义规则，v1.0 琥珀暖光整表登记为 M2 备选主题；design README 状态改「已冻结」+ 上游依据同步 ADR-002/ADR-003 降级语义；两处碰撞 README（evaluations/ideas）以 README-alpha-session.md 保留本会话评测规划与 IDEA 登记表
+
+Stage Summary:
+- 主线正式回归 aibiou/ImagineOS 基座：265 测试全绿 + tsc/eslint 零错 + §63 金路径全链（表达→意图→方向→故事→分镜→生成→预览→修订 v2→发布→Remix）在真实模型调用下完整复现，dev server 3000 端口恢复服务
+- 本会话资产收编完成：设计先行包六件（冻结，03 号已对齐主线主题）、ADR-001~003（正文原样入库 docs/decisions）、AGENTS.md 多智能体协议、worklog 三层合并零丢失；本会话代码与 git 历史完整保存在本地 .archive-session-alpha（含 bundle，不入库）
+- 已知边界（诚实记录）：agnes 视频队列满（native 供给受限——P3 供给升级是产品时长承诺前置条件，与主线 024 结论一致）；seed 行走预算偏紧需分块续跑；ADR 编号两套（本会话 001-003 vs 主线 0001-0004）与 task-tree 两套（本会话 Epic/T-ID vs 主线 development-task-tree）待收敛——列入 M2 前置文档任务
+- 待产品负责人决策：M2 范围（主线 worklog 已列后续战役：季进度 UI 网格 / 逐集自动串行编排 / 全季连播拼片 / 跨集参考帧 VLM 抽查 / Gate 7 收口口径）

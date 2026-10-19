@@ -73,3 +73,10 @@ storage-test/
 
 # 工作临时目录（质量门抽帧 / 渲染中间产物）
 /tmp/
+
+# 主线基座切换（2026-10-19）：本会话 Alpha 代码与历史的本地归档，不入库
+# （ essentials 已收编进 docs/ 与 worklog.md；完整 git 历史见归档内 session-alpha-history.bundle ）
+.archive-session-alpha/
+.staging/
+swap-mainline.sh
+swap-finish.sh
