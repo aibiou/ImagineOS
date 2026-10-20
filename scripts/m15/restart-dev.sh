@@ -1,9 +1,11 @@
 #!/bin/bash
 # scripts/m15/restart-dev.sh —— 以指定运动模式重启 dev server（孤儿化以跨工具调用存活）
 # 用法：bash scripts/m15/restart-dev.sh [product|native|composition]
-#   product     → 不设任何开关（ADR-0001 Rev.3 产品默认：native-first，逐镜回落合成）
+#   product     → 不设任何开关（产品默认：native-first，视频失败诚实报错，绝不降级）
 #   native      → IMAGINEOS_FORCE_NATIVE=1（全镜强制 native，评估/对照用）
-#   composition → IMAGINEOS_FORCE_COMPOSITION=1（运维逃生阀：视频 provider 全挂时强制合成路径）
+#   composition → IMAGINEOS_FORCE_COMPOSITION=1（运维逃生阀：⚠️ 输出为动态图片而非 AI 视频）
+#                 ⚠️ 2026-10-20 产品负责人红线：composition 仅限运维/评估，需产品负责人明示批准；
+#                 产品与种子流程一律 product 模式——「要真AI视频，生成不了就报错，不要欺骗用户」
 set -u
 MODE="${1:-product}"
 
@@ -25,6 +27,12 @@ export IMAGINEOS_FORCE_NATIVE="$([ "$MODE" = "native" ] && echo 1 || echo '')"
 export IMAGINEOS_FORCE_COMPOSITION="$([ "$MODE" = "composition" ] && echo 1 || echo '')"
 nohup ./node_modules/.bin/next dev -p 3000 > /tmp/m15-dev-$MODE.log 2>&1 < /dev/null &
 LAUNCHER=$!
+
+# 逃生阀显式警告（composition 输出动态图片，非真 AI 视频）
+if [ "$MODE" = "composition" ]; then
+  echo "⚠️  警告：composition 模式输出【动态图片】而非真实 AI 视频。仅限运维/评估用途。"
+  echo "⚠️  产品负责人红线（2026-10-20）：产品与种子流程禁止使用本模式，除非产品负责人明示批准。"
+fi
 
 # 4) 等待就绪
 for i in $(seq 1 60); do

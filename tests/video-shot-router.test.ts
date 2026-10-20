@@ -24,7 +24,7 @@ describe('video.shot 能力路由（M1.5 Gate 6）', () => {
     resetRegistry()
   })
 
-  it('链空时 router.video 抛 ProviderExhaustedError，hasVideoShotProvider=false（管线据此回落组合式）', async () => {
+  it('链空时 router.video 抛 ProviderExhaustedError，hasVideoShotProvider=false（2026-10-20 起：管线据此诚实报错，不再静默回落）', async () => {
     clearRegistry()
     expect(hasVideoShotProvider()).toBe(false)
     await expect(router.video({ prompt: 'p', imageUrl: 'data:image/png;base64,xx' }, ctx)).rejects.toThrow(/video\.shot/)

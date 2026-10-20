@@ -626,7 +626,14 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
     // C. native 视频：图像也被复用时才复用旧视频（首帧一致性——图像重画则视频连带重生成）；
     //    否则节奏化生成。失败上抛 → Job 可重试失败 → resume 只补本镜
     //    （Ken Burns 回落已取缔：宁可诚实失败，绝不静默降级成幻灯片）
-    if (motionMode === 'native' && hasVideoShotProvider()) {
+    //    2026-10-20 产品负责人指令重申：无可用视频模型时同样诚实报错，绝不静默跳过
+    //    视频分支把镜头变成动态图片——「生成不了就提醒用户，不要欺骗用户」。
+    if (motionMode === 'native') {
+      if (!hasVideoShotProvider()) {
+        throw new Error(
+          `镜头 ${i + 1} 无法生成真实 AI 视频：当前没有可用的视频生成模型。请到「设置 → 模型」配置并启用视频模型后重试；已完成的画面与配音不会重做。（ImagineOS 只输出真实 AI 视频，不会降级为动态图片。）`,
+        )
+      }
       if (imageReused && prior?.videoAssetId && (await assetService.getById(prior.videoAssetId).catch(() => null))) {
         entry.videoAssetId = prior.videoAssetId
         entry.videoGate = prior.videoGate
