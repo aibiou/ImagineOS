@@ -1107,3 +1107,18 @@ Stage Summary:
 - 镜头级调度语义兑现：动作镜头（奔跑/打斗/强运镜）自动 pro 高表现档，氛围镜头 std 档——供给分层消费，pro 档只花在收益最大的镜头上
 - 已知边界（诚实记录）：agnes 视频队列 503 供给受限依旧（本轮是「适配器就位」，真实吞吐取决于密钥到位）；适配器未做真实外网 E2E（无密钥，协议按 2026-10 官方文档逐字核对 + 21 项 mock 测试，首个真实创作任务即首次真实验证——测试按钮与验证文案已诚实说明）；「密钥到」后建议跑一次 probe-video-live.mjs 复核
 - 下一步建议：①产品负责人开通两家密钥（可灵 open.klingai.com / 火山方舟 console.volcengine.com/ark）→ 以 product 模式真实种子验证；②M2 范围决策（季进度 UI 网格/逐集自动串行编排/全季连播拼片/跨集参考帧 VLM 抽查/Gate 7 收口口径）仍待产品负责人裁决；③ADR 编号两套收敛仍挂账
+
+---
+Task ID: sync-push-031
+Agent: 主 Agent（GLM / Z.ai，本会话）
+Task: 用户核实提交状态并推送——video-supply-030 成果上送 GitHub 主线
+
+Work Log:
+- 用户询问「提交了吗」并提供 GitHub PAT；核实状态：本地工作树干净、HEAD=cc7edb8，远端 main 停在 cf77b07（落后 1 个提交）——即最新成果已 commit、尚未 push
+- 执行推送：git push HEAD:main 成功（cf77b07..cc7edb8）；git ls-remote 复核远端 main=cc7edb8，本地/远端完全同步
+- 本会话为纯同步操作，零产品代码改动；本条 worklog 随同提交入库
+
+Stage Summary:
+- GitHub 主线已同步至 cc7edb8（可灵/火山方舟两家视频 Provider 适配器 + 镜头级调度），此后沙箱重置可直接从远端恢复
+- 安全事项：用户 PAT 已在对话中明文出现并用于本次推送，建议尽快在 GitHub Settings → Developer settings → Personal access tokens 中吊销并轮换
+- 后续仍以 video-supply-030 收尾建议为准：①产品负责人开通可灵/火山方舟密钥 → product 模式真实种子验证；②M2 范围决策待裁决；③ADR 编号两套收敛挂账
