@@ -5,6 +5,12 @@
 // 方案：独立 db/test.db，每轮 vitest 删库重建（干净起点）；生产 worker 只扫 custom.db，彻底隔离。
 import { execSync } from 'node:child_process'
 import { rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+// 项目根随克隆位置走（2026-10-24：仓库从 /home/z/my-project 迁至 /home/z/my-project/ImagineOS，
+// 原写死 cwd 会让 node_modules/.bin/prisma 解析失败 —— status 127）
+const PROJECT_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const TEST_DB = '/home/z/my-project/db/test.db'
 const TEST_STORAGE = '/home/z/my-project/storage-test'
@@ -25,7 +31,7 @@ export default function setup(): void {
     /* 首轮或已被清理 */
   }
   execSync('node_modules/.bin/prisma db push --skip-generate', {
-    cwd: '/home/z/my-project',
+    cwd: PROJECT_ROOT,
     env: { ...process.env, DATABASE_URL: `file:${TEST_DB}` },
     stdio: ['ignore', 'pipe', 'pipe'],
   })

@@ -9,7 +9,9 @@
 set -u
 MODE="${1:-product}"
 
-cd /home/z/my-project
+# 项目根随脚本位置走（2026-10-24：仓库从 /home/z/my-project 迁至 /home/z/my-project/ImagineOS）
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/../.."
 
 # 1) 停掉现有 dev server（next dev 包装进程 + next-server）
 pkill -f "next dev -p 3000" 2>/dev/null

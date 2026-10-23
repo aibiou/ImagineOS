@@ -9,6 +9,8 @@ import {
   parseExtra,
   type ProviderConfigRow,
 } from '@/ai/router/provider-config'
+import { buildKlingProvider } from '@/ai/providers/kling'
+import { buildVolcArkProvider } from '@/ai/providers/volc-ark'
 import type {
   AudioTTSPayload,
   AudioTTSProvider,
@@ -26,8 +28,10 @@ import type {
 } from '@/ai/router/types'
 
 // ---------- 公共请求 ----------
+// request / downloadMedia / extractJsonError 为 Provider 层共享工具（kling.ts / volc-ark.ts
+// 复用同一套超时/重试/预签名下载语义）——导出见文件末尾「Provider 公共工具导出」。
 
-interface RequestOutcome {
+export interface RequestOutcome {
   ok: boolean
   status: number
   /** JSON 响应体（可为 null：二进制/空响应） */
@@ -38,7 +42,7 @@ interface RequestOutcome {
   error?: string
 }
 
-async function request(
+export async function request(
   method: 'GET' | 'POST',
   url: string,
   apiKey: string,
@@ -89,8 +93,8 @@ async function request(
   }
 }
 
-/** 提取 JSON 错误信息（OpenAI 兼容形态 {error:{message}} / {message} / 裸文本） */
-function extractJsonError(json: unknown): string | null {
+/** 提取 JSON 错误信息（OpenAI 兼容形态 {error:{message}} / {message} / 裸文本；方舟 {error:{message}} 同构） */
+export function extractJsonError(json: unknown): string | null {
   if (!json || typeof json !== 'object') return null
   const j = json as Record<string, unknown>
   const err = j.error
@@ -108,7 +112,7 @@ function sleep(ms: number): Promise<void> {
  * 媒体下载（图像/视频产物）：先裸下载（S3 预签名 URL 等自证链接，附加 Authorization 头会破坏签名
  * —— Agnes 实测：带鉴权头 → 401 XML 报错），401/403 时再带 Bearer 重试（部分网关需要）。
  */
-async function downloadMedia(url: string, apiKey: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string }> {
+export async function downloadMedia(url: string, apiKey: string, timeoutMs: number): Promise<{ bytes: Buffer; contentType: string }> {
   let lastError = '未知错误'
   for (const withAuth of [false, true]) {
     const controller = new AbortController()
@@ -488,7 +492,7 @@ function makeVideoProvider(row: ProviderConfigRow): VideoShotProvider {
   }
 }
 
-// ---------- 工厂 ----------
+// ---------- 工厂（providerType 分发：openai-compat 原逻辑 + kling/volc-ark 专有协议） ----------
 
 export function buildProviderFromConfig(row: ProviderConfigRow):
   | TextPlanProvider
@@ -497,6 +501,13 @@ export function buildProviderFromConfig(row: ProviderConfigRow):
   | VideoShotProvider
   | null {
   if (!row.enabled) return null
+  // 专有协议 providerType 先行分发（kling / volc-ark 只做 video 通道；密钥到即插即用）
+  if (row.providerType === 'kling') {
+    return buildKlingProvider(row)
+  }
+  if (row.providerType === 'volc-ark') {
+    return buildVolcArkProvider(row)
+  }
   switch (row.channel) {
     case 'llm': return makeLlmProvider(row)
     case 'image': return makeImageProvider(row)

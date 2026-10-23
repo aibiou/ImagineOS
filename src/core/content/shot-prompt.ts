@@ -148,3 +148,30 @@ export function videoPromptFor(shot: ShotSnapshot, structure: VersionStructure):
   const characters = structure.characters.length > 0 ? structure.characters : (structure.story?.characters ?? [])
   return `${base}. Camera: ${motion}.${framingFragment(shot)}${anchorFragment(shot, characters)}${worldFragment(shot, structure)}${lookBookFragment(structure)} Natural ambient movement within the scene (wind, light, fabric, subtle life), subjects move naturally. Visual style: ${styleOf(structure)}${emotion}. No text, no watermark.`
 }
+
+// ---------- 镜头级调度（honest-video-redline-029：pro 档给动作镜头） ----------
+// 语义：视频 provider 的两档（可灵 std/pro、按模型分档的 Seedance）中，动作镜头
+// （人物剧烈运动/打斗/竞速/强运镜）从 std 档收益最大——运动细节与肢体连续性是
+// std 档的已知弱项。判定基于运动提示词的中英关键词（宁缺勿滥：误判只是错过 pro
+// 加成，不产生错误产物——保守词表优于宽泛词表）。
+const ACTION_SHOT_KEYWORDS_ZH = [
+  '奔跑', '狂奔', '冲刺', '追逐', '打斗', '格斗', '挥拳', '踢', '跳下', '跃', '腾空', '翻滚',
+  '侧翻', '疾驰', '飞驰', '急刹', '甩尾', '漂移', '爆炸', '崩塌', '坠落', '扑向', '撞', '逃',
+  '躲避', '攀爬', '舞蹈', '旋转', '挥舞', '投掷', '抛', '拔剑', '出鞘', '涌向', '冲入', '冲向',
+]
+const ACTION_SHOT_KEYWORDS_EN = [
+  'sprint', 'running', 'dash', 'chase', 'fight', 'punch', 'kick', 'leap', 'jump off', 'tumble',
+  'roll', 'race', 'gallop', 'drift', 'explosion', 'collapse', 'falling', 'lunge', 'dodge',
+  'climb', 'dance', 'spin', 'swing', 'throw', 'sword', 'charge', 'escape', 'swim', 'struggle',
+]
+
+/** 动作镜头判定（镜头级调度输入）：运动提示词命中强动作关键词 → true → provider 取 pro 档。
+ *  纯函数，无副作用；词表两端对齐（videoPromptFor 的输出是中文基底 + 英文运镜/风格段）。 */
+export function isActionShot(text: string): boolean {
+  if (!text) return false
+  const lower = text.toLowerCase()
+  return (
+    ACTION_SHOT_KEYWORDS_ZH.some((k) => text.includes(k)) ||
+    ACTION_SHOT_KEYWORDS_EN.some((k) => lower.includes(k))
+  )
+}

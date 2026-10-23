@@ -1083,3 +1083,27 @@ Stage Summary:
 - 作品库当前为空（0 件）；重新种子需等真视频供给可用后以 product 模式执行
 - 解药分工：产品负责人开通可灵开放平台/火山方舟（Seedance）密钥；主 Agent 开工两家适配器（异步任务协议，agnes+cogvideox 双先例，1-2 天/家）+ 镜头级调度接线（pro 档给动作镜头）——密钥到即插即用
 - 教训（诚实记录）：①恢复/种子流程一律 product 模式，composition 仅限产品负责人明示批准 ②gitignore 资产（db/storage/归档）不进平台快照，重大数据须入 git 或外部备份 ③探针脚本随 schema 演进同步（两个旧探针已死，新 probe-video-live.mjs 已建）
+
+---
+Task ID: video-supply-030
+Agent: 主 Agent（GLM-4.6 / AI CTO 角色，本会话）
+Task: 继续开发（用户指令「继续开发这个项目」）——基座恢复 + honest-video-redline-029 解药分工落地：可灵/火山方舟两家外部视频 Provider 适配器 + 镜头级调度接线
+
+Work Log:
+- 【基座恢复】clone aibiou/ImagineOS（HEAD=cf77b07）至 /home/z/my-project/ImagineOS；bun install（861 包）→ prisma generate → db push（新建 db/custom.db，路径 /home/z/my-project/db 保持原沙箱口径）→ restore-provider-config.mjs 幂等恢复（agnes-com 三通道 + ant-ling llm）
+- 【路径修复】两处原沙箱写死路径随迁移动态化：tests/global-setup.ts 的 cwd（prisma bin 解析 127）与 scripts/m15/restart-dev.sh 的 cd——改为基于自身位置解析项目根
+- 【基线验证】lint 0 警告 / tsc 0 错 / vitest 265/265 全绿（28 文件 56s，与 serial-season-027 收口基线一致）；dev server product 模式启动 HTTP 200，agent-browser 首页渲染验证（h1「你想表达什么？」/ console 零错误 / 截图 session-restore-baseline.png）
+- 【解药分工落地：可灵适配器】src/ai/providers/kling.ts：自签 HS256 JWT（iss=ak, exp=1800s, nbf=-5s，node:crypto 纯实现零依赖）；密钥形态 AccessKey:SecretKey（冒号）或 JSON；提交 POST {origin}/v1/videos/image2video（image 剥 data URI 前缀给裸 Base64，官方口径）+ 轮询 GET …/{task_id}（succeed→task_result.videos[0].url，failed→task_status_msg）；轮询 4s×55=220s（能力级 330s 内）；下载预签名 CDN 裸下载；repro 落 taskId/mode/duration/aspect_ratio/videoId
+- 【解药分工落地：方舟适配器】src/ai/providers/volc-ark.ts：标准 Bearer Key；提交 POST {base}/contents/generations/tasks（content 数组 text+image_url，data URL 原样透传）+ 轮询同路径 {id}（succeeded→content.video_url）；i2v ratio=adaptive（官方推荐跟随首帧）；duration 夹取 [4,12]（1.0 pro 与 2.5 安全交集）；watermark=false、generate_audio=false（产品管线 TTS 旁白）；repro 落 taskId/seed/totalTokens
+- 【镜头级调度】shot-prompt.ts 新增 isActionShot（中英强动作词表，宁缺勿滥）；pipeline-executor.ts 的 router.video 调用从恒定 speedFirst:true 改为 !isActionShot——动作镜头→可灵 pro 高表现档，其余 std；可灵侧 klingMode：extra.mode 最优先 > speedFirst=false→pro > 默认 std
+- 【配置层】PROVIDER_TYPES 扩展 ['openai-compat','kling','volc-ark']；buildProviderFromConfig 按 providerType 分发（专有协议先行，openai-compat 原逻辑回归不变）；openai-compat.ts 导出 request/downloadMedia/extractJsonError 供新适配器复用（Provider 层内共享，分层边界不破坏）
+- 【连接级验证】testProviderConnection 对 kling 分支为密钥形态校验（core 层内联 ak:sk/JSON 判定，零网络零消耗——可灵无 /models 端点，避免误导性 401）；volc-ark 走方舟 OpenAI 兼容 /models；remote-models 路由对 kling 短路返回「无模型列表接口，请手动填写（如 kling-v2-5-turbo）」
+- 【UI】设置→模型服务：新增「接入协议」选择器（3 项）+ PROVIDER_TYPE_HINTS 诚实说明；预设 chips 增加可灵/火山方舟（providerType+baseUrl 联动）；密钥占位符按协议切换；fetchModels 空列表优先透传后端专有提示
+- 【验证】21 项新测试（tests/kling-volcark.test.ts：JWT 签名可复验/参数映射纯函数/提交 body 逐项断言/轮询终态/链构建/isActionShot）；全量回归 286/286 全绿（265 基线+21 新增）+ lint/tsc 零错；agent-browser 实测：设置页协议选择器三选项、可灵预设联动、方舟预设联动、可灵短路提示完整呈现、console 零错误；截图 video-supply-030-settings-form.png / video-supply-030-kling-shortcut.png
+- 【工程细节】可灵密钥解析移入 async IIFE（错误统一为 rejected promise）；测试失败路径先挂断言再推进 fake timer（避免 unhandledRejection 跨 macrotask 裸奔）；React 受控 input 需 fill 命令（直接赋值不触发 onChange）
+
+Stage Summary:
+- 两家外部视频 Provider「密钥到即插即用」就位：产品负责人开通密钥后（可灵开放平台 AccessKey:SecretKey / 火山方舟 API Key），在设置页添加提供商→填模型名（如 kling-v2-5-turbo、doubao-seedance-1-0-pro-250528）→ 保存即进入 video.shot 候选链，零代码改动
+- 镜头级调度语义兑现：动作镜头（奔跑/打斗/强运镜）自动 pro 高表现档，氛围镜头 std 档——供给分层消费，pro 档只花在收益最大的镜头上
+- 已知边界（诚实记录）：agnes 视频队列 503 供给受限依旧（本轮是「适配器就位」，真实吞吐取决于密钥到位）；适配器未做真实外网 E2E（无密钥，协议按 2026-10 官方文档逐字核对 + 21 项 mock 测试，首个真实创作任务即首次真实验证——测试按钮与验证文案已诚实说明）；「密钥到」后建议跑一次 probe-video-live.mjs 复核
+- 下一步建议：①产品负责人开通两家密钥（可灵 open.klingai.com / 火山方舟 console.volcengine.com/ark）→ 以 product 模式真实种子验证；②M2 范围决策（季进度 UI 网格/逐集自动串行编排/全季连播拼片/跨集参考帧 VLM 抽查/Gate 7 收口口径）仍待产品负责人裁决；③ADR 编号两套收敛仍挂账

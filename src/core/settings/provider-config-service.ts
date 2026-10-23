@@ -12,8 +12,16 @@ import { db } from '@/lib/db'
 export const PROVIDER_CHANNELS = ['llm', 'image', 'tts', 'video'] as const
 export type ProviderChannel = (typeof PROVIDER_CHANNELS)[number]
 
-export const PROVIDER_TYPES = ['openai-compat'] as const
+export const PROVIDER_TYPES = ['openai-compat', 'kling', 'volc-ark'] as const
 export type ProviderType = (typeof PROVIDER_TYPES)[number]
+// providerType 语义（ADR-0004 多模型提供商策略 / honest-video-redline-029 解药）：
+//   openai-compat —— OpenAI 兼容接口（chat/completions、images/generations、audio/speech、
+//                    video 双协议 SiliconFlow submit/status + Agnes OpenAI-Videos）
+//   kling         —— 可灵开放平台（快影快手）：自签 HS256 JWT 鉴权；video.shot 走
+//                    /v1/videos/image2video 提交 + /v1/videos/image2video/{task_id} 轮询；
+//                    密钥形态 apiKey = "AccessKey:SecretKey"（冒号分隔）
+//   volc-ark      —— 火山方舟（字节 Ark / Doubao-Seedance）：标准 Bearer Key；
+//                    video.shot 走 /contents/generations/tasks 提交 + 同路径 {id} 轮询
 
 /** 提供商（连接级）输入 */
 export const ModelProviderSchema = z.object({
@@ -315,7 +323,16 @@ export const providerConfigService = {
   async testProviderConnection(id: string): Promise<ConnectionTestResult | null> {
     const row = await db.modelProvider.findUnique({ where: { id } })
     if (!row) return null
-    const result = await testOpenAiCompatConnection({ baseUrl: row.baseUrl, apiKey: row.apiKey })
+    // 可灵（kling）：自签 JWT 协议、官方无 /models 端点——连接级验证降为密钥形态校验
+    //（零网络零消耗；真实签名/调用在 ai 层 kling.ts，密钥形态不依赖 ai 层——分层单向 core 不 import ai）。
+    // volc-ark：方舟 /models 为 OpenAI 兼容端点，走原逻辑（GET 零消耗）。
+    let result: ConnectionTestResult
+    if (row.providerType === 'kling') {
+      const shape = checkKlingKeyShape(row.apiKey)
+      result = { ok: shape.ok, message: shape.message, latencyMs: 0 }
+    } else {
+      result = await testOpenAiCompatConnection({ baseUrl: row.baseUrl, apiKey: row.apiKey })
+    }
     await db.modelProvider.update({
       where: { id },
       data: {
@@ -414,6 +431,26 @@ export function joinUrl(base: string, path: string): string {
 /**
  * OpenAI 兼容连接测试：GET {baseUrl}/models（标准端点，零消耗）。
  */
+/** 可灵密钥形态校验（core 层内联：ak:sk 冒号切分或 JSON 形态；HMAC 签名属 ai 层 kling.ts） */
+function checkKlingKeyShape(apiKey: string): { ok: boolean; message: string } {
+  const t = apiKey.trim()
+  let valid = false
+  if (t.startsWith('{')) {
+    try {
+      const j = JSON.parse(t) as { ak?: unknown; sk?: unknown }
+      valid = typeof j.ak === 'string' && typeof j.sk === 'string' && j.ak.length > 0 && j.sk.length > 0
+    } catch {
+      valid = false
+    }
+  } else {
+    const i = t.indexOf(':')
+    valid = i > 0 && i < t.length - 1
+  }
+  return valid
+    ? { ok: true, message: '密钥形态有效（AccessKey:SecretKey）。可灵无模型列表接口，连接级验证到此为止；真实可用性以首个创作任务为准' }
+    : { ok: false, message: '密钥形态无效：请填 AccessKey:SecretKey（冒号分隔）或 {"ak":"...","sk":"..."}——密钥来自可灵开放平台 API 服务' }
+}
+
 export async function testOpenAiCompatConnection(row: {
   baseUrl: string
   apiKey: string

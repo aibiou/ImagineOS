@@ -62,14 +62,23 @@ const CHANNEL_NAME: Record<string, string> = Object.fromEntries(CHANNELS.map((c)
 const BUILTIN: Record<string, string> = Object.fromEntries(CHANNELS.map((c) => [c.key, c.builtin]))
 
 /** 新建提供商预设（只预填地址——模型在保存后于卡片内添加） */
-const PROVIDER_PRESETS = [
+const PROVIDER_PRESETS: Array<{ label: string; baseUrl: string; providerType?: 'kling' | 'volc-ark' }> = [
   { label: 'OpenAI', baseUrl: 'https://api.openai.com/v1' },
   { label: 'DeepSeek', baseUrl: 'https://api.deepseek.com/v1' },
   { label: 'SiliconFlow', baseUrl: 'https://api.siliconflow.cn/v1' },
   { label: 'Moonshot', baseUrl: 'https://api.moonshot.cn/v1' },
   { label: '智谱GLM', baseUrl: 'https://open.bigmodel.cn/api/paas/v4' },
   { label: '蚂蚁百灵', baseUrl: 'https://api.ant-ling.com/v1' },
+  { label: '可灵视频', baseUrl: 'https://api-beijing.klingai.com', providerType: 'kling' },
+  { label: '火山方舟', baseUrl: 'https://ark.cn-beijing.volces.com/api/v3', providerType: 'volc-ark' },
 ]
+
+/** 接入协议说明（诚实提示：各协议的密钥形态与能力边界，video-supply-030） */
+const PROVIDER_TYPE_HINTS: Record<string, string> = {
+  'openai-compat': 'OpenAI 兼容接口：对话/生图/配音/视频（含 SiliconFlow submit/status 与 Agnes 双协议自动识别）',
+  kling: '可灵开放平台视频（快手）：密钥填 AccessKey:SecretKey；无模型列表，手动填写（如 kling-v2-5-turbo / kling-v3）；动作镜头自动 pro 高表现档',
+  'volc-ark': '火山方舟 Doubao-Seedance 视频（字节）：密钥填方舟 API Key；模型名如 doubao-seedance-1-0-pro-250528；图生视频 ratio=adaptive 跟随首帧',
+}
 
 const INPUT_CLS = 'border-white/25! bg-black/40! text-zinc-100!'
 const SELECT_CLS =
@@ -635,15 +644,15 @@ function ProviderCard({
 // ---------- 新建提供商表单 ----------
 
 function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: string) => void; onCancel: () => void }) {
-  const [form, setForm] = useState({ label: '', baseUrl: '', apiKey: '' })
+  const [form, setForm] = useState({ label: '', baseUrl: '', apiKey: '', providerType: 'openai-compat' })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [fetchingModels, setFetchingModels] = useState(false)
   const [fetchMsg, setFetchMsg] = useState<string | null>(null)
   const [modelList, setModelList] = useState<string[] | null>(null)
 
-  const applyPreset = (p: { label: string; baseUrl: string }) => {
-    setForm((f) => ({ ...f, baseUrl: p.baseUrl, label: f.label || p.label }))
+  const applyPreset = (p: { label: string; baseUrl: string; providerType?: 'kling' | 'volc-ark' }) => {
+    setForm((f) => ({ ...f, baseUrl: p.baseUrl, label: f.label || p.label, providerType: p.providerType ?? 'openai-compat' }))
   }
 
   const fetchModels = async () => {
@@ -653,7 +662,7 @@ function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: strin
       const res = await fetch('/api/settings/model-providers/remote-models', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim() }),
+        body: JSON.stringify({ baseUrl: form.baseUrl.trim(), apiKey: form.apiKey.trim(), providerType: form.providerType }),
       })
       const data = await res.json()
       if (!res.ok) {
@@ -665,7 +674,8 @@ function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: strin
       setModelList(models)
       setFetchMsg(
         models.length === 0
-          ? '✓ 连接成功，但该服务未返回任何模型（保存后再手动添加模型名）'
+          ? // 空列表优先透传后端专有提示（如可灵「无模型列表接口，请手动填写」）
+            `✓ ${typeof data.message === 'string' && data.message.trim() ? data.message : '连接成功，但该服务未返回任何模型（保存后再手动添加模型名）'}`
           : `✓ 密钥可用——获取到 ${models.length} 个模型，保存后进卡片里添加`,
       )
     } catch (e) {
@@ -686,7 +696,7 @@ function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: strin
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           label: form.label.trim(),
-          providerType: 'openai-compat',
+          providerType: form.providerType,
           baseUrl: form.baseUrl.trim(),
           apiKey: form.apiKey.trim(),
         }),
@@ -725,6 +735,15 @@ function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: strin
           <Input className={INPUT_CLS} value={form.label} placeholder="如：DeepSeek" onChange={(e) => setForm((f) => ({ ...f, label: e.target.value }))} />
         </div>
         <div className="space-y-1.5">
+          <Label>接入协议</Label>
+          <select value={form.providerType} onChange={(e) => setForm((f) => ({ ...f, providerType: e.target.value }))} className={`${SELECT_CLS} appearance-none pr-8`}>
+            <option value="openai-compat">OpenAI 兼容（对话/生图/配音/视频）</option>
+            <option value="kling">可灵（视频 · AccessKey:SecretKey）</option>
+            <option value="volc-ark">火山方舟 Seedance（视频）</option>
+          </select>
+          <p className="text-[11px] leading-relaxed text-zinc-500">{PROVIDER_TYPE_HINTS[form.providerType] ?? ''}</p>
+        </div>
+        <div className="space-y-1.5 sm:col-span-2">
           <Label>接口地址（Endpoint）</Label>
           <Input className={INPUT_CLS} value={form.baseUrl} placeholder="https://api.example.com/v1" onChange={(e) => setForm((f) => ({ ...f, baseUrl: e.target.value }))} />
         </div>
@@ -746,7 +765,7 @@ function AddProviderForm({ onSaved, onCancel }: { onSaved: (newProviderId: strin
             className={INPUT_CLS}
             type="password"
             value={form.apiKey}
-            placeholder="仅保存在本机沙箱数据库，页面显示时打码"
+            placeholder={form.providerType === 'kling' ? 'AccessKey:SecretKey（可灵开放平台 → API 服务）' : form.providerType === 'volc-ark' ? '方舟 API Key（控制台 → API Key 管理）' : '仅保存在本机沙箱数据库，页面显示时打码'}
             onChange={(e) => setForm((f) => ({ ...f, apiKey: e.target.value }))}
           />
           {fetchMsg ? (

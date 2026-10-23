@@ -30,7 +30,7 @@ import { versionRepo } from '@/core/repositories/version-repo'
 import { contentService } from '@/core/content/content-service'
 import { assetService } from '@/core/assets/asset-service'
 import { parseStructure, type ShotSnapshot, type VersionStructure } from '@/core/content/schemas'
-import { imagePromptFor, videoPromptFor } from '@/core/content/shot-prompt'
+import { imagePromptFor, videoPromptFor, isActionShot } from '@/core/content/shot-prompt'
 import { aspectRatioOf, imageSizeForAspect, renderDimensionsForAspect, videoSizeForAspect } from '@/core/content/aspect'
 import { motionModeFor, storyboardModeDecision } from '@/core/content/storyboard-mode'
 import {
@@ -511,12 +511,15 @@ export async function executeStoryboardJob(jobId: string, payload: JobPayload): 
   ): Promise<{ videoAssetId: string; videoGate?: ShotAssetEntry['videoGate'] }> {
     const facts = gateFactsFor(shot, structure)
     const prompt = videoPromptFor(shot, structure)
+    // 镜头级调度（honest-video-redline-029）：动作镜头（奔跑/打斗/强运镜等，isActionShot 判定）
+    // → speedFirst=false → 可灵走 pro 高表现档；其余镜头保持速度优先（std 档，双额度轮转吞吐优先）
+    const actionShot = isActionShot(prompt)
     const imageUrl = `data:${imageMime};base64,${imageBase64}`
     let lastVerdict: Awaited<ReturnType<typeof reviewVideo>> = null
     let lastResult: VideoShotResult | null = null
     for (let attempt = 1; attempt <= 1 + MAX_VIDEO_REGENS; attempt++) {
       const { result } = await pacedVideoCall(() =>
-        router.video({ prompt, imageUrl, size: videoSize, speedFirst: true }, { ...ctx, purpose: 'shot.video' }),
+        router.video({ prompt, imageUrl, size: videoSize, speedFirst: !actionShot }, { ...ctx, purpose: 'shot.video' }),
       )
       lastResult = result
       if (!videoGateEnabled()) break
